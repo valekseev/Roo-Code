@@ -124,6 +124,7 @@ const openAiSchema = baseProviderSettingsSchema.extend({
 	openAiStreamingEnabled: z.boolean().optional(),
 	openAiHostHeader: z.string().optional(), // Keep temporarily for backward compatibility during migration.
 	openAiHeaders: z.record(z.string(), z.string()).optional(),
+	openAiTimeoutMs: z.number().optional(),
 })
 
 const ollamaSchema = baseProviderSettingsSchema.extend({
@@ -306,6 +307,7 @@ export const PROVIDER_SETTINGS_KEYS = keysOf<ProviderSettings>()([
 	"openAiStreamingEnabled",
 	"openAiHostHeader", // Keep temporarily for backward compatibility during migration.
 	"openAiHeaders",
+	"openAiTimeoutMs",
 	// Ollama
 	"ollamaModelId",
 	"ollamaBaseUrl",

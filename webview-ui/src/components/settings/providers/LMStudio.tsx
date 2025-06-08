@@ -64,6 +64,19 @@ export const LMStudio = ({ apiConfiguration, setApiConfigurationField }: LMStudi
 				className="w-full">
 				<label className="block font-medium mb-1">{t("settings:providers.lmStudio.modelId")}</label>
 			</VSCodeTextField>
+			<VSCodeTextField
+				value={apiConfiguration?.openAiTimeoutMs ? (apiConfiguration.openAiTimeoutMs / 1000).toString() : ""}
+				onInput={handleInputChange("openAiTimeoutMs", (e) => {
+					const value = parseInt((e.target as HTMLInputElement).value)
+					return isNaN(value) || value <= 0 ? undefined : value * 1000
+				})}
+				placeholder="60"
+				className="w-full">
+				<label className="block font-medium mb-1">Request Timeout (seconds)</label>
+			</VSCodeTextField>
+			<div className="text-sm text-vscode-descriptionForeground -mt-2">
+				Timeout for API requests in seconds. Default is 60 seconds. Increase this if you get socket timeout errors.
+			</div>
 			{lmStudioModels.length > 0 && (
 				<VSCodeRadioGroup
 					value={

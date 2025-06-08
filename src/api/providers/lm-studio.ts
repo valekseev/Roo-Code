@@ -24,6 +24,7 @@ export class LmStudioHandler extends BaseProvider implements SingleCompletionHan
 		this.client = new OpenAI({
 			baseURL: (this.options.lmStudioBaseUrl || "http://localhost:1234") + "/v1",
 			apiKey: "noop",
+			timeout: this.options.openAiTimeoutMs || 60000, // Default 60 seconds
 		})
 	}
 

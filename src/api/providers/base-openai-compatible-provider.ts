@@ -59,6 +59,7 @@ export abstract class BaseOpenAiCompatibleProvider<ModelName extends string>
 			baseURL,
 			apiKey: this.options.apiKey,
 			defaultHeaders: DEFAULT_HEADERS,
+			timeout: this.options.openAiTimeoutMs || 60000, // Default 60 seconds
 		})
 	}
 

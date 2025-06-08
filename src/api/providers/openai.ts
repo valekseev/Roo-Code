@@ -46,6 +46,8 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 			...(this.options.openAiHeaders || {}),
 		}
 
+		const timeout = this.options.openAiTimeoutMs || 60000 // Default 60 seconds
+
 		if (isAzureAiInference) {
 			// Azure AI Inference Service (e.g., for DeepSeek) uses a different path structure
 			this.client = new OpenAI({
@@ -53,6 +55,7 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 				apiKey,
 				defaultHeaders: headers,
 				defaultQuery: { "api-version": this.options.azureApiVersion || "2024-05-01-preview" },
+				timeout,
 			})
 		} else if (isAzureOpenAi) {
 			// Azure API shape slightly differs from the core API shape:
@@ -62,12 +65,14 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 				apiKey,
 				apiVersion: this.options.azureApiVersion || azureOpenAiDefaultApiVersion,
 				defaultHeaders: headers,
+				timeout,
 			})
 		} else {
 			this.client = new OpenAI({
 				baseURL,
 				apiKey,
 				defaultHeaders: headers,
+				timeout,
 			})
 		}
 	}
