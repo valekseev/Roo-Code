@@ -4,6 +4,7 @@ import { ToolUse, AskApproval, HandleError, PushToolResult, RemoveClosingTag } f
 import { Task } from "../task/Task"
 import { defaultModeSlug, getModeBySlug } from "../../shared/modes"
 import { formatResponse } from "../prompts/responses"
+import { t } from "../../i18n"
 
 export async function newTaskTool(
 	cline: Task,
