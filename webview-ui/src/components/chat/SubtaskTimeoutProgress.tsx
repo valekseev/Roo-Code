@@ -1,6 +1,6 @@
 import { memo, useState, useEffect } from "react"
 import { useTranslation } from "react-i18next"
-import { Clock, Plus, X } from "lucide-react"
+import { Clock, X } from "lucide-react"
 
 import { Button } from "@src/components/ui"
 import { cn } from "@src/lib/utils"
@@ -20,7 +20,6 @@ const SubtaskTimeoutProgress = ({
 	taskId,
 	timeoutMs,
 	startTime,
-	warningPercent = 80,
 	onExtend,
 	onClear,
 	className,
@@ -40,8 +39,10 @@ const SubtaskTimeoutProgress = ({
 	const elapsed = currentTime - startTime
 	const remaining = Math.max(0, timeoutMs - elapsed)
 	const progress = Math.min(100, (elapsed / timeoutMs) * 100)
-	const isWarning = progress >= warningPercent
-	const isUrgent = progress >= 95
+
+	// Color logic: red when 5 seconds or less, orange when 20 seconds or less, blue otherwise
+	const isUrgent = remaining <= 5000 // 5 seconds
+	const isWarning = remaining <= 20000 && remaining > 5000 // 20 seconds to 5 seconds
 
 	useEffect(() => {
 		if (remaining <= 0 && !isExpired) {
@@ -60,8 +61,18 @@ const SubtaskTimeoutProgress = ({
 		return `${seconds}s`
 	}
 
-	const handleExtend = () => {
-		const extensionMs = Math.max(60000, Math.floor(timeoutMs * 0.5)) // Extend by 50% or 1 minute, whichever is larger
+	const handleExtend1m = () => {
+		const extensionMs = 60000 // 1 minute
+		onExtend?.(taskId, extensionMs)
+		vscode.postMessage({
+			type: "extendSubtaskTimeout",
+			taskId,
+			extensionMs,
+		})
+	}
+
+	const handleExtend10m = () => {
+		const extensionMs = 600000 // 10 minutes
 		onExtend?.(taskId, extensionMs)
 		vscode.postMessage({
 			type: "extendSubtaskTimeout",
@@ -98,27 +109,24 @@ const SubtaskTimeoutProgress = ({
 				isUrgent
 					? "bg-red-500/10 border-red-500/20"
 					: isWarning
-						? "bg-yellow-500/10 border-yellow-500/20"
+						? "bg-orange-500/10 border-orange-500/20"
 						: "bg-blue-500/10 border-blue-500/20",
 				className,
 			)}>
 			<div className="flex items-center gap-2 flex-grow">
 				<Clock
 					size={16}
-					className={cn(isUrgent ? "text-red-500" : isWarning ? "text-yellow-500" : "text-blue-500")}
+					className={cn(isUrgent ? "text-red-500" : isWarning ? "text-orange-500" : "text-blue-500")}
 				/>
 				<div className="flex flex-col flex-grow min-w-0">
 					<div className="flex items-center justify-between">
-						<span className="text-sm font-medium">
-							{t("chat:timeout.remaining")}: {formatTime(remaining)}
-						</span>
-						<span className="text-xs opacity-70">{progress.toFixed(0)}%</span>
+						<span className="text-sm font-medium">⏱️ {formatTime(remaining)} remaining</span>
 					</div>
 					<div className="w-full bg-vscode-panel-border rounded-full h-1.5 mt-1">
 						<div
 							className={cn(
 								"h-1.5 rounded-full transition-all duration-1000",
-								isUrgent ? "bg-red-500" : isWarning ? "bg-yellow-500" : "bg-blue-500",
+								isUrgent ? "bg-red-500" : isWarning ? "bg-orange-500" : "bg-blue-500",
 							)}
 							style={{ width: `${progress}%` }}
 						/>
@@ -126,28 +134,32 @@ const SubtaskTimeoutProgress = ({
 				</div>
 			</div>
 
-			{isWarning && (
-				<div className="flex items-center gap-1 shrink-0">
-					<Button
-						variant="ghost"
-						size="sm"
-						onClick={handleExtend}
-						title={t("chat:timeout.extend")}
-						className="h-6 px-2 text-xs">
-						<Plus size={12} />
-						{t("chat:timeout.extend")}
-					</Button>
-					<Button
-						variant="ghost"
-						size="sm"
-						onClick={handleClear}
-						title={t("chat:timeout.clear")}
-						className="h-6 px-2 text-xs">
-						<X size={12} />
-						{t("chat:timeout.clear")}
-					</Button>
-				</div>
-			)}
+			<div className="flex items-center gap-1 shrink-0">
+				<Button
+					variant="ghost"
+					size="sm"
+					onClick={handleExtend1m}
+					title="Extend by 1 minute"
+					className="h-6 px-2 text-xs">
+					+1m
+				</Button>
+				<Button
+					variant="ghost"
+					size="sm"
+					onClick={handleExtend10m}
+					title="Extend by 10 minutes"
+					className="h-6 px-2 text-xs">
+					+10m
+				</Button>
+				<Button
+					variant="ghost"
+					size="sm"
+					onClick={handleClear}
+					title={t("chat:timeout.clear")}
+					className="h-6 px-2 text-xs">
+					<X size={12} />
+				</Button>
+			</div>
 		</div>
 	)
 }

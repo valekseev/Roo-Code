@@ -166,6 +166,9 @@ export class ClineProvider
 		// Add this cline instance into the stack that represents the order of all the called tasks.
 		this.clineStack.push(cline)
 
+		// Set up timeout event listeners
+		this.setupTimeoutEventListeners(cline)
+
 		// Ensure getState() resolves correctly.
 		const state = await this.getState()
 
@@ -628,6 +631,84 @@ export class ClineProvider
 		await this.view?.webview.postMessage(message)
 	}
 
+	private setupTimeoutEventListeners(cline: Task) {
+		// Listen for timeout events and send status updates to webview
+		cline.on("taskTimeoutStarted", (taskId: string) => {
+			this.sendTimeoutStatusUpdate(cline, taskId)
+		})
+
+		cline.on("taskTimeoutWarning", (taskId: string, remainingMs: number) => {
+			this.sendTimeoutStatusUpdate(cline, taskId)
+		})
+
+		cline.on("taskTimedOut", (taskId: string) => {
+			this.sendTimeoutStatusUpdate(cline, taskId)
+		})
+
+		cline.on("taskTimeoutExtended", (taskId: string, newTimeoutMs: number) => {
+			this.sendTimeoutStatusUpdate(cline, taskId)
+		})
+
+		cline.on("taskTimeoutCleared", (taskId: string) => {
+			this.sendTimeoutStatusUpdate(cline, taskId)
+		})
+
+		// Listen for task completion to clear any active timeouts
+		cline.on("taskCompleted", (taskId: string) => {
+			// Clear any timeouts this task was managing for its subtasks
+			cline.clearAllSubtaskTimeouts()
+
+			// Send update to clear UI
+			this.sendTimeoutStatusUpdate(cline, taskId)
+		})
+
+		// Listen for task abortion to clear any active timeouts
+		cline.on("taskAborted", () => {
+			// Clear any timeouts this task was managing
+			cline.clearAllSubtaskTimeouts()
+
+			// Send update to clear UI for this task
+			this.sendTimeoutStatusUpdate(cline, cline.taskId)
+		})
+	}
+
+	private async sendTimeoutStatusUpdate(cline: Task, taskId: string) {
+		const timeoutStatus = cline.getSubtaskTimeoutStatus(taskId)
+
+		if (timeoutStatus) {
+			const { maxSubtaskTimeoutExtensions } = await this.getState()
+
+			const subtaskTimeoutStatus = {
+				taskId,
+				isActive: cline.isSubtaskTimeoutActive(taskId),
+				timeoutMs: timeoutStatus.timeoutMs,
+				startTime: timeoutStatus.startTime,
+				warningThresholdPercent: (timeoutStatus.warningMs / timeoutStatus.timeoutMs) * 100,
+				extensionsUsed: timeoutStatus.extensionsUsed || 0,
+				maxExtensions: maxSubtaskTimeoutExtensions || 3,
+			}
+
+			await this.postMessageToWebview({
+				type: "subtaskTimeoutUpdate",
+				timeoutStatus: subtaskTimeoutStatus,
+			})
+		} else {
+			// Timeout was cleared or expired
+			await this.postMessageToWebview({
+				type: "subtaskTimeoutUpdate",
+				timeoutStatus: {
+					taskId,
+					isActive: false,
+					timeoutMs: 0,
+					startTime: 0,
+					warningThresholdPercent: 80,
+					extensionsUsed: 0,
+					maxExtensions: 3,
+				},
+			})
+		}
+	}
+
 	private async getHMRHtmlContent(webview: vscode.Webview): Promise<string> {
 		// Try to read the port from the file
 		let localPort = "5173" // Default fallback
@@ -991,6 +1072,14 @@ export class ClineProvider
 		}
 
 		console.log(`[subtasks] cancelling task ${cline.taskId}.${cline.instanceId}`)
+
+		// Clear timeout if this task has one managed by its parent
+		if (cline.parentTask) {
+			const timeoutCleared = cline.parentTask.clearSubtaskTimeout(cline.taskId)
+			if (timeoutCleared) {
+				console.log(`[subtasks] cleared timeout for cancelled task ${cline.taskId}`)
+			}
+		}
 
 		const { historyItem } = await this.getTaskWithId(cline.taskId)
 		// Preserve parent and root task information for history item.

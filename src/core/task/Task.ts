@@ -99,6 +99,7 @@ export type ClineEvents = {
 	taskCompleted: [taskId: string, tokenUsage: TokenUsage, toolUsage: ToolUsage]
 	taskTokenUsageUpdated: [taskId: string, tokenUsage: TokenUsage]
 	taskToolFailed: [taskId: string, tool: ToolName, error: string]
+	taskTimeoutStarted: [taskId: string]
 	taskTimeoutWarning: [taskId: string, remainingMs: number]
 	taskTimedOut: [taskId: string]
 	taskTimeoutExtended: [taskId: string, newTimeoutMs: number]
@@ -1952,9 +1953,15 @@ export class Task extends EventEmitter<ClineEvents> {
 		}
 
 		this.timeoutManager.startTimeout(subtaskId, config)
+
+		// Emit timeout started event for initial status update
+		this.emit("taskTimeoutStarted", subtaskId)
 	}
 
 	public extendSubtaskTimeout(subtaskId: string, extensionMs: number): boolean {
+		console.log(
+			`[TIMEOUT DEBUG] Task ${this.taskId} attempting to extend timeout for subtask ${subtaskId} by ${extensionMs}ms`,
+		)
 		const config: TimeoutConfig = {
 			timeoutMs: 0, // Will be calculated by manager
 			onTimeout: (taskId: string) => {
@@ -1975,11 +1982,15 @@ export class Task extends EventEmitter<ClineEvents> {
 			},
 		}
 
-		return this.timeoutManager.extendTimeout(subtaskId, extensionMs, config)
+		const result = this.timeoutManager.extendTimeout(subtaskId, extensionMs, config)
+		console.log(`[TIMEOUT DEBUG] Task ${this.taskId} extend timeout result for subtask ${subtaskId}: ${result}`)
+		return result
 	}
 
 	public clearSubtaskTimeout(subtaskId: string): boolean {
+		console.log(`[TIMEOUT DEBUG] Task ${this.taskId} attempting to clear timeout for subtask ${subtaskId}`)
 		const result = this.timeoutManager.clearTimeout(subtaskId)
+		console.log(`[TIMEOUT DEBUG] Task ${this.taskId} clear timeout result for subtask ${subtaskId}: ${result}`)
 		if (result) {
 			this.emit("taskTimeoutCleared", subtaskId)
 		}
@@ -1995,7 +2006,16 @@ export class Task extends EventEmitter<ClineEvents> {
 	}
 
 	public isSubtaskTimeoutActive(subtaskId: string): boolean {
-		return this.timeoutManager.isActive(subtaskId)
+		const isActive = this.timeoutManager.isActive(subtaskId)
+		console.log(
+			`[TIMEOUT DEBUG] Task ${this.taskId} checking if timeout is active for subtask ${subtaskId}: ${isActive}`,
+		)
+		return isActive
+	}
+
+	public clearAllSubtaskTimeouts(): void {
+		console.log(`[TIMEOUT DEBUG] Task ${this.taskId} clearing all subtask timeouts`)
+		this.timeoutManager.clearAll()
 	}
 
 	// Getters

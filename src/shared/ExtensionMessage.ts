@@ -32,6 +32,22 @@ export interface IndexingStatusUpdateMessage {
 	values: IndexingStatus
 }
 
+// Subtask timeout status types
+export interface SubtaskTimeoutStatus {
+	taskId: string
+	isActive: boolean
+	timeoutMs: number
+	startTime: number
+	warningThresholdPercent: number
+	extensionsUsed: number
+	maxExtensions: number
+}
+
+export interface SubtaskTimeoutUpdateMessage {
+	type: "subtaskTimeoutUpdate"
+	timeoutStatus: SubtaskTimeoutStatus
+}
+
 export interface LanguageModelChatSelector {
 	vendor?: string
 	family?: string
@@ -90,6 +106,7 @@ export interface ExtensionMessage {
 		| "indexCleared"
 		| "codebaseIndexConfig"
 		| "marketplaceInstallResult"
+		| "subtaskTimeoutUpdate"
 	text?: string
 	payload?: any // Add a generic payload for now, can refine later
 	action?:
@@ -136,6 +153,7 @@ export interface ExtensionMessage {
 	userInfo?: CloudUserInfo
 	organizationAllowList?: OrganizationAllowList
 	tab?: string
+	timeoutStatus?: SubtaskTimeoutStatus
 }
 
 export type ExtensionState = Pick<
@@ -250,6 +268,7 @@ export type ExtensionState = Pick<
 	autoCondenseContextPercent: number
 	marketplaceItems?: MarketplaceItem[]
 	marketplaceInstalledMetadata?: { project: Record<string, any>; global: Record<string, any> }
+	subtaskTimeoutStatus?: SubtaskTimeoutStatus
 }
 
 export interface ClineSayTool {

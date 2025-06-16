@@ -288,6 +288,13 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
 					setExtensionRouterModels(message.routerModels)
 					break
 				}
+				case "subtaskTimeoutUpdate": {
+					setState((prevState) => ({
+						...prevState,
+						subtaskTimeoutStatus: message.timeoutStatus,
+					}))
+					break
+				}
 			}
 		},
 		[setListApiConfigMeta],

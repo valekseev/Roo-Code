@@ -19,6 +19,7 @@ import Thumbnails from "../common/Thumbnails"
 import { TaskActions } from "./TaskActions"
 import { ContextWindowProgress } from "./ContextWindowProgress"
 import { Mention } from "./Mention"
+import SubtaskTimeoutProgress from "./SubtaskTimeoutProgress"
 
 export interface TaskHeaderProps {
 	task: ClineMessage
@@ -48,7 +49,7 @@ const TaskHeader = ({
 	onClose,
 }: TaskHeaderProps) => {
 	const { t } = useTranslation()
-	const { apiConfiguration, currentTaskItem } = useExtensionState()
+	const { apiConfiguration, currentTaskItem, subtaskTimeoutStatus } = useExtensionState()
 	const { id: modelId, info: model } = useSelectedModel(apiConfiguration)
 	const [isTaskExpanded, setIsTaskExpanded] = useState(false)
 
@@ -106,19 +107,36 @@ const TaskHeader = ({
 					</Button>
 				</div>
 				{/* Collapsed state: Track context and cost if we have any */}
-				{!isTaskExpanded && contextWindow > 0 && (
-					<div className={`w-full flex flex-row items-center gap-1 h-auto`}>
-						<ContextWindowProgress
-							contextWindow={contextWindow}
-							contextTokens={contextTokens || 0}
-							maxTokens={
-								model
-									? getModelMaxOutputTokens({ modelId, model, settings: apiConfiguration })
-									: undefined
-							}
-						/>
-						{condenseButton}
-						{!!totalCost && <VSCodeBadge>${totalCost.toFixed(2)}</VSCodeBadge>}
+				{!isTaskExpanded && (
+					<div className="w-full flex flex-col gap-1">
+						{/* Debug: Always show timeout bar in v5 to test UI changes */}
+						{subtaskTimeoutStatus?.isActive ? (
+							<SubtaskTimeoutProgress
+								taskId={subtaskTimeoutStatus.taskId}
+								timeoutMs={subtaskTimeoutStatus.timeoutMs}
+								startTime={subtaskTimeoutStatus.startTime}
+								warningPercent={subtaskTimeoutStatus.warningThresholdPercent}
+							/>
+						) : (
+							<div className="p-2 bg-blue-500/10 border border-blue-500/20 rounded-md text-xs">
+								🚀 Roo Code v6 - Ready for timeout testing (create subtask with timeout_seconds)
+							</div>
+						)}
+						{contextWindow > 0 && (
+							<div className={`w-full flex flex-row items-center gap-1 h-auto`}>
+								<ContextWindowProgress
+									contextWindow={contextWindow}
+									contextTokens={contextTokens || 0}
+									maxTokens={
+										model
+											? getModelMaxOutputTokens({ modelId, model, settings: apiConfiguration })
+											: undefined
+									}
+								/>
+								{condenseButton}
+								{!!totalCost && <VSCodeBadge>${totalCost.toFixed(2)}</VSCodeBadge>}
+							</div>
+						)}
 					</div>
 				)}
 				{/* Expanded state: Show task text and images */}
@@ -141,6 +159,19 @@ const TaskHeader = ({
 						{task.images && task.images.length > 0 && <Thumbnails images={task.images} />}
 
 						<div className="flex flex-col gap-1">
+							{/* Debug: Always show timeout bar in v5 to test UI changes */}
+							{subtaskTimeoutStatus?.isActive ? (
+								<SubtaskTimeoutProgress
+									taskId={subtaskTimeoutStatus.taskId}
+									timeoutMs={subtaskTimeoutStatus.timeoutMs}
+									startTime={subtaskTimeoutStatus.startTime}
+									warningPercent={subtaskTimeoutStatus.warningThresholdPercent}
+								/>
+							) : (
+								<div className="p-2 bg-blue-500/10 border border-blue-500/20 rounded-md text-xs">
+									🚀 Roo Code v6 - Ready for timeout testing (create subtask with timeout_seconds)
+								</div>
+							)}
 							{isTaskExpanded && contextWindow > 0 && (
 								<div
 									className={`w-full flex ${windowWidth < 400 ? "flex-col" : "flex-row"} gap-1 h-auto`}>

@@ -44,6 +44,56 @@ import { getCommand } from "../../utils/commands"
 const ALLOWED_VSCODE_SETTINGS = new Set(["terminal.integrated.inheritEnv"])
 
 import { MarketplaceManager, MarketplaceItemType } from "../../services/marketplace"
+import { Task } from "../task/Task"
+
+/**
+ * Finds the task that manages the timeout for a given subtask ID.
+ * This could be the current task itself, or a parent task in the task hierarchy.
+ */
+function findTimeoutManagingTask(provider: ClineProvider, targetTaskId: string): Task | undefined {
+	const currentTask = provider.getCurrentCline()
+	if (!currentTask) {
+		console.log(`[TIMEOUT DEBUG] No current task found`)
+		return undefined
+	}
+
+	console.log(`[TIMEOUT DEBUG] Looking for timeout managing task for targetTaskId: ${targetTaskId}`)
+	console.log(`[TIMEOUT DEBUG] Current task ID: ${currentTask.taskId}`)
+	console.log(`[TIMEOUT DEBUG] Current task has parent: ${!!currentTask.parentTask}`)
+
+	// Check if the current task manages this timeout
+	const currentTaskManagesTimeout = currentTask.isSubtaskTimeoutActive(targetTaskId)
+	console.log(`[TIMEOUT DEBUG] Current task manages timeout for ${targetTaskId}: ${currentTaskManagesTimeout}`)
+	if (currentTaskManagesTimeout) {
+		return currentTask
+	}
+
+	// Walk up the parent hierarchy to find the timeout-managing task
+	let parentTask = currentTask.parentTask
+	let level = 1
+	while (parentTask) {
+		console.log(`[TIMEOUT DEBUG] Checking parent level ${level}, parent task ID: ${parentTask.taskId}`)
+		const parentManagesTimeout = parentTask.isSubtaskTimeoutActive(targetTaskId)
+		console.log(
+			`[TIMEOUT DEBUG] Parent level ${level} manages timeout for ${targetTaskId}: ${parentManagesTimeout}`,
+		)
+		if (parentManagesTimeout) {
+			return parentTask
+		}
+		parentTask = parentTask.parentTask
+		level++
+	}
+
+	// If not found in parents, check if this is the current task's own timeout
+	if (currentTask.taskId === targetTaskId && currentTask.parentTask) {
+		console.log(`[TIMEOUT DEBUG] Target task ID matches current task ID, returning parent task`)
+		// This task's timeout is managed by its parent
+		return currentTask.parentTask
+	}
+
+	console.log(`[TIMEOUT DEBUG] No timeout managing task found for ${targetTaskId}`)
+	return undefined
+}
 
 export const webviewMessageHandler = async (
 	provider: ClineProvider,
@@ -1555,15 +1605,24 @@ export const webviewMessageHandler = async (
 		case "extendSubtaskTimeout":
 			if (message.taskId && typeof message.extensionMs === "number") {
 				try {
-					const currentTask = provider.getCurrentCline()
-					if (currentTask) {
-						const success = currentTask.extendSubtaskTimeout(message.taskId, message.extensionMs)
+					console.log(
+						`[TIMEOUT DEBUG] Received extendSubtaskTimeout request for taskId: ${message.taskId}, extensionMs: ${message.extensionMs}`,
+					)
+					// Find the task that manages this timeout (could be current task or a parent task)
+					const timeoutManagingTask = findTimeoutManagingTask(provider, message.taskId)
+					if (timeoutManagingTask) {
+						console.log(`[TIMEOUT DEBUG] Found timeout managing task: ${timeoutManagingTask.taskId}`)
+						const success = timeoutManagingTask.extendSubtaskTimeout(message.taskId, message.extensionMs)
+						console.log(`[TIMEOUT DEBUG] Extend timeout result: ${success}`)
 						if (!success) {
 							provider.log(
 								`Failed to extend subtask timeout: task ${message.taskId} not found or inactive`,
 							)
 							vscode.window.showWarningMessage(t("common:errors.subtask_timeout_not_found"))
 						}
+					} else {
+						provider.log(`No task found that manages timeout for task ${message.taskId}`)
+						vscode.window.showWarningMessage(t("common:errors.subtask_timeout_not_found"))
 					}
 				} catch (error) {
 					provider.log(
@@ -1576,13 +1635,22 @@ export const webviewMessageHandler = async (
 		case "clearSubtaskTimeout":
 			if (message.taskId) {
 				try {
-					const currentTask = provider.getCurrentCline()
-					if (currentTask) {
-						const success = currentTask.clearSubtaskTimeout(message.taskId)
+					console.log(`[TIMEOUT DEBUG] Received clearSubtaskTimeout request for taskId: ${message.taskId}`)
+					// Find the task that manages this timeout (could be current task or a parent task)
+					const timeoutManagingTask = findTimeoutManagingTask(provider, message.taskId)
+					if (timeoutManagingTask) {
+						console.log(
+							`[TIMEOUT DEBUG] Found timeout managing task for clear: ${timeoutManagingTask.taskId}`,
+						)
+						const success = timeoutManagingTask.clearSubtaskTimeout(message.taskId)
+						console.log(`[TIMEOUT DEBUG] Clear timeout result: ${success}`)
 						if (!success) {
 							provider.log(`Failed to clear subtask timeout: task ${message.taskId} not found`)
 							vscode.window.showWarningMessage(t("common:errors.subtask_timeout_not_found"))
 						}
+					} else {
+						provider.log(`No task found that manages timeout for task ${message.taskId}`)
+						vscode.window.showWarningMessage(t("common:errors.subtask_timeout_not_found"))
 					}
 				} catch (error) {
 					provider.log(

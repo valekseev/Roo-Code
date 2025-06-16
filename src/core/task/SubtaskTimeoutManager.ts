@@ -143,6 +143,16 @@ export class SubtaskTimeoutManager {
 			.map(([taskId]) => taskId)
 	}
 
+	clearAll(): void {
+		// Clear all active timeouts and set them as inactive
+		for (const [taskId, status] of this.statuses.entries()) {
+			if (status.isActive) {
+				status.isActive = false
+				this.clearTimeout(taskId)
+			}
+		}
+	}
+
 	dispose(): void {
 		for (const timeoutHandle of this.timeouts.values()) {
 			clearTimeout(timeoutHandle)
