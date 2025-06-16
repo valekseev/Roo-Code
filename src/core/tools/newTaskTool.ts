@@ -101,6 +101,10 @@ export async function newTaskTool(
 			await delay(500)
 
 			const newCline = await provider.initClineWithTask(unescapedMessage, undefined, cline, timeoutMs)
+			if (!newCline) {
+				pushToolResult(t("tools:newTask.errors.policy_restriction"))
+				return
+			}
 			cline.emit("taskSpawned", newCline.taskId)
 
 			// Start timeout if specified
