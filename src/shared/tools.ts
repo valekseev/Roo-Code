@@ -64,6 +64,7 @@ export const toolParamNames = [
 	"end_line",
 	"query",
 	"args",
+	"timeout_seconds",
 ] as const
 
 export type ToolParamName = (typeof toolParamNames)[number]

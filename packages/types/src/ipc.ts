@@ -21,6 +21,10 @@ export enum RooCodeEventName {
 	TaskCompleted = "taskCompleted",
 	TaskTokenUsageUpdated = "taskTokenUsageUpdated",
 	TaskToolFailed = "taskToolFailed",
+	TaskTimeoutWarning = "taskTimeoutWarning",
+	TaskTimedOut = "taskTimedOut",
+	TaskTimeoutExtended = "taskTimeoutExtended",
+	TaskTimeoutCleared = "taskTimeoutCleared",
 	EvalPass = "evalPass",
 	EvalFail = "evalFail",
 }
@@ -44,6 +48,10 @@ export const rooCodeEventsSchema = z.object({
 	[RooCodeEventName.TaskCompleted]: z.tuple([z.string(), tokenUsageSchema, toolUsageSchema]),
 	[RooCodeEventName.TaskTokenUsageUpdated]: z.tuple([z.string(), tokenUsageSchema]),
 	[RooCodeEventName.TaskToolFailed]: z.tuple([z.string(), toolNamesSchema, z.string()]),
+	[RooCodeEventName.TaskTimeoutWarning]: z.tuple([z.string(), z.number()]),
+	[RooCodeEventName.TaskTimedOut]: z.tuple([z.string()]),
+	[RooCodeEventName.TaskTimeoutExtended]: z.tuple([z.string(), z.number()]),
+	[RooCodeEventName.TaskTimeoutCleared]: z.tuple([z.string()]),
 })
 
 export type RooCodeEvents = z.infer<typeof rooCodeEventsSchema>
@@ -155,6 +163,26 @@ export const taskEventSchema = z.discriminatedUnion("eventName", [
 	z.object({
 		eventName: z.literal(RooCodeEventName.TaskToolFailed),
 		payload: rooCodeEventsSchema.shape[RooCodeEventName.TaskToolFailed],
+		taskId: z.number().optional(),
+	}),
+	z.object({
+		eventName: z.literal(RooCodeEventName.TaskTimeoutWarning),
+		payload: rooCodeEventsSchema.shape[RooCodeEventName.TaskTimeoutWarning],
+		taskId: z.number().optional(),
+	}),
+	z.object({
+		eventName: z.literal(RooCodeEventName.TaskTimedOut),
+		payload: rooCodeEventsSchema.shape[RooCodeEventName.TaskTimedOut],
+		taskId: z.number().optional(),
+	}),
+	z.object({
+		eventName: z.literal(RooCodeEventName.TaskTimeoutExtended),
+		payload: rooCodeEventsSchema.shape[RooCodeEventName.TaskTimeoutExtended],
+		taskId: z.number().optional(),
+	}),
+	z.object({
+		eventName: z.literal(RooCodeEventName.TaskTimeoutCleared),
+		payload: rooCodeEventsSchema.shape[RooCodeEventName.TaskTimeoutCleared],
 		taskId: z.number().optional(),
 	}),
 	z.object({

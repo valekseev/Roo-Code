@@ -85,6 +85,7 @@ import { processUserContentMentions } from "../mentions/processUserContentMentio
 import { ApiMessage } from "../task-persistence/apiMessages"
 import { getMessagesSinceLastSummary, summarizeConversation } from "../condense"
 import { maybeRemoveImageBlocks } from "../../api/transform/image-cleaning"
+import { SubtaskTimeoutManager, type TimeoutConfig, type TimeoutStatus } from "./SubtaskTimeoutManager"
 
 export type ClineEvents = {
 	message: [{ action: "created" | "updated"; message: ClineMessage }]
@@ -98,6 +99,10 @@ export type ClineEvents = {
 	taskCompleted: [taskId: string, tokenUsage: TokenUsage, toolUsage: ToolUsage]
 	taskTokenUsageUpdated: [taskId: string, tokenUsage: TokenUsage]
 	taskToolFailed: [taskId: string, tool: ToolName, error: string]
+	taskTimeoutWarning: [taskId: string, remainingMs: number]
+	taskTimedOut: [taskId: string]
+	taskTimeoutExtended: [taskId: string, newTimeoutMs: number]
+	taskTimeoutCleared: [taskId: string]
 }
 
 export type TaskOptions = {
@@ -116,6 +121,7 @@ export type TaskOptions = {
 	parentTask?: Task
 	taskNumber?: number
 	onCreated?: (cline: Task) => void
+	subtaskTimeoutMs?: number
 }
 
 export class Task extends EventEmitter<ClineEvents> {
@@ -136,6 +142,10 @@ export class Task extends EventEmitter<ClineEvents> {
 	isPaused: boolean = false
 	pausedModeSlug: string = defaultModeSlug
 	private pauseInterval: NodeJS.Timeout | undefined
+
+	// Timeout Management
+	private timeoutManager: SubtaskTimeoutManager
+	private subtaskTimeoutMs?: number
 
 	// API
 	readonly apiConfiguration: ProviderSettings
@@ -209,6 +219,7 @@ export class Task extends EventEmitter<ClineEvents> {
 		parentTask,
 		taskNumber = -1,
 		onCreated,
+		subtaskTimeoutMs,
 	}: TaskOptions) {
 		super()
 
@@ -274,6 +285,8 @@ export class Task extends EventEmitter<ClineEvents> {
 		}
 
 		this.toolRepetitionDetector = new ToolRepetitionDetector(this.consecutiveMistakeLimit)
+		this.timeoutManager = new SubtaskTimeoutManager()
+		this.subtaskTimeoutMs = subtaskTimeoutMs
 
 		onCreated?.(this)
 
@@ -1007,6 +1020,13 @@ export class Task extends EventEmitter<ClineEvents> {
 		if (this.pauseInterval) {
 			clearInterval(this.pauseInterval)
 			this.pauseInterval = undefined
+		}
+
+		// Clean up timeout manager
+		try {
+			this.timeoutManager.dispose()
+		} catch (error) {
+			console.error("Error disposing timeout manager:", error)
 		}
 
 		// Release any terminals associated with this task.
@@ -1890,6 +1910,82 @@ export class Task extends EventEmitter<ClineEvents> {
 		if (error) {
 			this.emit("taskToolFailed", this.taskId, toolName, error)
 		}
+	}
+
+	// Timeout Management
+
+	public startSubtaskTimeout(subtaskId: string, timeoutMs?: number): void {
+		const actualTimeoutMs = timeoutMs || this.subtaskTimeoutMs
+		if (!actualTimeoutMs) {
+			return
+		}
+
+		const config: TimeoutConfig = {
+			timeoutMs: actualTimeoutMs,
+			warningMs: Math.floor(actualTimeoutMs * 0.8), // Warn at 80%
+			onTimeout: (taskId: string) => {
+				this.emit("taskTimedOut", taskId)
+				const provider = this.providerRef.deref()
+				if (provider) {
+					provider.abortSubtask(taskId)
+				}
+			},
+			onWarning: (taskId: string, remainingMs: number) => {
+				this.emit("taskTimeoutWarning", taskId, remainingMs)
+			},
+			onExtended: (taskId: string, newTimeoutMs: number) => {
+				this.emit("taskTimeoutExtended", taskId, newTimeoutMs)
+			},
+			onCleared: (taskId: string) => {
+				this.emit("taskTimeoutCleared", taskId)
+			},
+		}
+
+		this.timeoutManager.startTimeout(subtaskId, config)
+	}
+
+	public extendSubtaskTimeout(subtaskId: string, extensionMs: number): boolean {
+		const config: TimeoutConfig = {
+			timeoutMs: 0, // Will be calculated by manager
+			onTimeout: (taskId: string) => {
+				this.emit("taskTimedOut", taskId)
+				const provider = this.providerRef.deref()
+				if (provider) {
+					provider.abortSubtask(taskId)
+				}
+			},
+			onWarning: (taskId: string, remainingMs: number) => {
+				this.emit("taskTimeoutWarning", taskId, remainingMs)
+			},
+			onExtended: (taskId: string, newTimeoutMs: number) => {
+				this.emit("taskTimeoutExtended", taskId, newTimeoutMs)
+			},
+			onCleared: (taskId: string) => {
+				this.emit("taskTimeoutCleared", taskId)
+			},
+		}
+
+		return this.timeoutManager.extendTimeout(subtaskId, extensionMs, config)
+	}
+
+	public clearSubtaskTimeout(subtaskId: string): boolean {
+		const result = this.timeoutManager.clearTimeout(subtaskId)
+		if (result) {
+			this.emit("taskTimeoutCleared", subtaskId)
+		}
+		return result
+	}
+
+	public getSubtaskTimeoutStatus(subtaskId: string): TimeoutStatus | undefined {
+		return this.timeoutManager.getStatus(subtaskId)
+	}
+
+	public getSubtaskTimeRemaining(subtaskId: string): number {
+		return this.timeoutManager.getTimeRemaining(subtaskId)
+	}
+
+	public isSubtaskTimeoutActive(subtaskId: string): boolean {
+		return this.timeoutManager.isActive(subtaskId)
 	}
 
 	// Getters

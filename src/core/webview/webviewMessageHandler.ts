@@ -1575,5 +1575,57 @@ export const webviewMessageHandler = async (
 			}
 			break
 		}
+		case "extendSubtaskTimeout":
+			if (message.taskId && typeof message.extensionMs === "number") {
+				try {
+					const currentTask = provider.getCurrentCline()
+					if (currentTask) {
+						const success = currentTask.extendSubtaskTimeout(message.taskId, message.extensionMs)
+						if (!success) {
+							provider.log(
+								`Failed to extend subtask timeout: task ${message.taskId} not found or inactive`,
+							)
+							vscode.window.showWarningMessage(t("common:errors.subtask_timeout_not_found"))
+						}
+					}
+				} catch (error) {
+					provider.log(
+						`Failed to extend subtask timeout: ${JSON.stringify(error, Object.getOwnPropertyNames(error), 2)}`,
+					)
+					vscode.window.showErrorMessage(t("common:errors.extend_subtask_timeout"))
+				}
+			}
+			break
+		case "clearSubtaskTimeout":
+			if (message.taskId) {
+				try {
+					const currentTask = provider.getCurrentCline()
+					if (currentTask) {
+						const success = currentTask.clearSubtaskTimeout(message.taskId)
+						if (!success) {
+							provider.log(`Failed to clear subtask timeout: task ${message.taskId} not found`)
+							vscode.window.showWarningMessage(t("common:errors.subtask_timeout_not_found"))
+						}
+					}
+				} catch (error) {
+					provider.log(
+						`Failed to clear subtask timeout: ${JSON.stringify(error, Object.getOwnPropertyNames(error), 2)}`,
+					)
+					vscode.window.showErrorMessage(t("common:errors.clear_subtask_timeout"))
+				}
+			}
+			break
+		case "defaultSubtaskTimeoutMs":
+			await updateGlobalState("defaultSubtaskTimeoutMs", message.value)
+			await provider.postStateToWebview()
+			break
+		case "subtaskTimeoutWarningPercent":
+			await updateGlobalState("subtaskTimeoutWarningPercent", message.value)
+			await provider.postStateToWebview()
+			break
+		case "maxSubtaskTimeoutExtensions":
+			await updateGlobalState("maxSubtaskTimeoutExtensions", message.value)
+			await provider.postStateToWebview()
+			break
 	}
 }

@@ -21,6 +21,10 @@ export interface RooCodeAPIEvents {
 	taskCompleted: [taskId: string, tokenUsage: TokenUsage, toolUsage: ToolUsage]
 	taskTokenUsageUpdated: [taskId: string, tokenUsage: TokenUsage]
 	taskToolFailed: [taskId: string, toolName: ToolName, error: string]
+	taskTimeoutWarning: [taskId: string, remainingMs: number]
+	taskTimedOut: [taskId: string]
+	taskTimeoutExtended: [taskId: string, newTimeoutMs: number]
+	taskTimeoutCleared: [taskId: string]
 }
 
 export interface RooCodeAPI extends EventEmitter<RooCodeAPIEvents> {

@@ -72,6 +72,11 @@ export interface WebviewMessage {
 		| "alwaysAllowSubtasks"
 		| "autoCondenseContext"
 		| "autoCondenseContextPercent"
+		| "extendSubtaskTimeout"
+		| "clearSubtaskTimeout"
+		| "defaultSubtaskTimeoutMs"
+		| "subtaskTimeoutWarningPercent"
+		| "maxSubtaskTimeoutExtensions"
 		| "condensingApiConfigId"
 		| "updateCondensingPrompt"
 		| "playSound"
@@ -195,6 +200,8 @@ export interface WebviewMessage {
 	source?: "global" | "project"
 	requestId?: string
 	ids?: string[]
+	taskId?: string
+	extensionMs?: number
 	hasSystemPromptOverride?: boolean
 	terminalOperation?: "continue" | "abort"
 	historyPreviewCollapsed?: boolean

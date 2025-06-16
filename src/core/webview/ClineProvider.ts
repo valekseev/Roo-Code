@@ -228,6 +228,32 @@ export class ClineProvider
 		await this.getCurrentCline()?.resumePausedTask(lastMessage)
 	}
 
+	// Abort a specific subtask by taskId (used for timeout scenarios)
+	async abortSubtask(taskId: string) {
+		console.log(`[subtasks] aborting subtask ${taskId} due to timeout`)
+
+		// Find the task in the stack
+		const taskIndex = this.clineStack.findIndex((task) => task.taskId === taskId)
+		if (taskIndex === -1) {
+			console.warn(`[subtasks] task ${taskId} not found in stack for abortion`)
+			return
+		}
+
+		const task = this.clineStack[taskIndex]
+
+		// If it's the current task (top of stack), handle like normal cancellation
+		if (taskIndex === this.clineStack.length - 1) {
+			await this.finishSubTask("Task timed out and was aborted")
+		} else {
+			// If it's not the current task, abort it directly and remove from stack
+			await task.abortTask(true)
+			this.clineStack.splice(taskIndex, 1)
+
+			// Update UI to reflect stack change
+			await this.postStateToWebview()
+		}
+	}
+
 	/*
 	VSCode extensions use the disposable pattern to clean up resources when the sidebar/editor tab is closed by the user or system. This applies to event listening, commands, interacting with the UI, etc.
 	- https://vscode-docs.readthedocs.io/en/stable/extensions/patterns-and-principles/
@@ -518,6 +544,7 @@ export class ClineProvider
 		task?: string,
 		images?: string[],
 		parentTask?: Task,
+		subtaskTimeoutMs?: number,
 		options: Partial<
 			Pick<
 				TaskOptions,
@@ -551,6 +578,7 @@ export class ClineProvider
 			parentTask,
 			taskNumber: this.clineStack.length + 1,
 			onCreated: (cline) => this.emit("clineCreated", cline),
+			subtaskTimeoutMs,
 			...options,
 		})
 
