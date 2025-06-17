@@ -556,11 +556,6 @@ export class ClineProvider
 			>
 		> = {},
 	) {
-		// Check MDM compliance before proceeding
-		if (!this.checkMdmCompliance()) {
-			return // Block task creation if not compliant
-		}
-
 		const {
 			apiConfiguration,
 			organizationAllowList,
@@ -1280,6 +1275,11 @@ export class ClineProvider
 
 		// Update VSCode context for experiments
 		await this.updateVSCodeContext()
+
+		// Check MDM compliance and send user to account tab if not compliant
+		if (!this.checkMdmCompliance()) {
+			await this.postMessageToWebview({ type: "action", action: "accountButtonClicked" })
+		}
 	}
 
 	/**
@@ -1494,6 +1494,7 @@ export class ClineProvider
 				codebaseIndexEmbedderBaseUrl: "",
 				codebaseIndexEmbedderModelId: "",
 			},
+			mdmCompliant: this.checkMdmCompliance(),
 		}
 	}
 
@@ -1749,11 +1750,6 @@ export class ClineProvider
 		const compliance = this.mdmService.isCompliant()
 
 		if (!compliance.compliant) {
-			vscode.window.showErrorMessage(compliance.reason, "Sign In").then((selection) => {
-				if (selection === "Sign In") {
-					this.postMessageToWebview({ type: "action", action: "accountButtonClicked" })
-				}
-			})
 			return false
 		}
 
