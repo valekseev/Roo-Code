@@ -229,6 +229,18 @@ export class ClineProvider
 	// this is used when a sub task is finished and the parent task needs to be resumed
 	async finishSubTask(lastMessage: string) {
 		console.log(`[subtasks] finishing subtask ${lastMessage}`)
+
+		// Get the current subtask before removing it
+		const cline = this.getCurrentCline()
+
+		// Clear timeout if this task has one managed by its parent
+		if (cline && cline.parentTask) {
+			const timeoutCleared = cline.parentTask.clearSubtaskTimeout(cline.taskId)
+			if (timeoutCleared) {
+				console.log(`[subtasks] cleared timeout for finished task ${cline.taskId}`)
+			}
+		}
+
 		// remove the last cline instance from the stack (this is the finished sub task)
 		await this.removeClineFromStack()
 		// resume the last cline instance in the stack (if it exists - this is the 'parent' calling task)
