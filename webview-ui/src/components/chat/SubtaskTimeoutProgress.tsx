@@ -41,6 +41,9 @@ const SubtaskTimeoutProgress = ({
 	useEffect(() => {
 		setIsExpired(false)
 		expiredNotifiedRef.current = false
+		// Update current time immediately when timeout props change
+		// Use startTime to ensure we start with 0 elapsed time
+		setCurrentTime(startTime)
 	}, [taskId, timeoutMs, startTime])
 
 	const elapsed = currentTime - startTime
@@ -75,7 +78,7 @@ const SubtaskTimeoutProgress = ({
 	}
 
 	const formatTimeWithSign = (ms: number, negative: boolean = false): string => {
-		const seconds = Math.ceil(ms / 1000)
+		const seconds = Math.floor(ms / 1000)
 		const minutes = Math.floor(seconds / 60)
 		const remainingSeconds = seconds % 60
 		const sign = negative ? "-" : ""

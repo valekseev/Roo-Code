@@ -298,8 +298,8 @@
 	},
 	"timeout": {
 		"expired": "Timeout Expired",
-		"extend": "Add time (hold to repeat, accelerates to 5min after 2s)",
-		"reduce": "Reduce time (hold to repeat, stops at 1min minimum)",
-		"clear": "Cancel timeout and stop task"
+		"extend": "Add time (hold to repeat)",
+		"reduce": "Reduce time (hold to repeat)",
+		"clear": "Cancel timeout"
 	}
 }
