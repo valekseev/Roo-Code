@@ -29,6 +29,10 @@ const SubtaskTimeoutProgress = ({
 	const [isExpired, setIsExpired] = useState(false)
 	const expiredNotifiedRef = useRef(false)
 
+	// Track the previous taskId to detect new timeout sessions
+	const prevTaskIdRef = useRef<string>()
+	const prevStartTimeRef = useRef<number>()
+
 	useEffect(() => {
 		const interval = setInterval(() => {
 			setCurrentTime(Date.now())
@@ -36,10 +40,6 @@ const SubtaskTimeoutProgress = ({
 
 		return () => clearInterval(interval)
 	}, [])
-
-	// Track the previous taskId and startTime to detect new timeout sessions
-	const prevTaskIdRef = useRef<string>()
-	const prevStartTimeRef = useRef<number>()
 
 	// Reset expired state when props change (new timeout or extension)
 	useEffect(() => {
@@ -51,12 +51,13 @@ const SubtaskTimeoutProgress = ({
 		const isNewTimeout = taskId !== prevTaskIdRef.current || startTime !== prevStartTimeRef.current
 
 		if (isNewTimeout) {
-			setCurrentTime(Date.now())
+			// For new timeouts, initialize currentTime to startTime to begin with 0 elapsed time
+			setCurrentTime(startTime)
 			prevTaskIdRef.current = taskId
 			prevStartTimeRef.current = startTime
 		}
 		// For timeout extensions (same taskId, same startTime, different timeoutMs),
-		// we don't reset currentTime to maintain elapsed time continuity
+		// we don't reset currentTime - it continues to tick from the interval
 	}, [taskId, timeoutMs, startTime])
 
 	const elapsed = currentTime - startTime
