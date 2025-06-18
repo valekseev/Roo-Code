@@ -45,3 +45,7 @@ logs
 .qodo/
 .vercel
 .roo/mcp.json
+
+# Development documentation files
+CLAUDE.md
+timeout.md
