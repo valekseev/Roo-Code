@@ -66,12 +66,60 @@ export class SubtaskTimeoutManager {
 			return false
 		}
 
-		this.clearTimeout(taskId)
+		// Clear existing timeout handlers but preserve the original startTime
+		const timeoutHandle = this.timeouts.get(taskId)
+		const warningHandle = this.warnings.get(taskId)
+
+		if (timeoutHandle) {
+			clearTimeout(timeoutHandle)
+			this.timeouts.delete(taskId)
+		}
+
+		if (warningHandle) {
+			clearTimeout(warningHandle)
+			this.warnings.delete(taskId)
+		}
 
 		const elapsed = Date.now() - status.startTime
 		const newTimeoutMs = status.timeoutMs + extensionMs
 		const remainingWarningMs = status.warningMs ? Math.max(0, status.warningMs - elapsed) : undefined
 
+		// Ensure minimum remaining time of 1 minute (60000ms)
+		const minRemainingMs = 60000
+		const remainingMs = newTimeoutMs - elapsed
+		if (remainingMs < minRemainingMs) {
+			// Adjust newTimeoutMs to ensure minimum remaining time
+			const adjustedTimeoutMs = elapsed + minRemainingMs
+			const actualNewTimeoutMs = adjustedTimeoutMs
+
+			// Update with the adjusted timeout
+			const newStatus: TimeoutStatus = {
+				...status,
+				timeoutMs: actualNewTimeoutMs,
+				hasWarned: elapsed >= (status.warningMs || Infinity),
+			}
+
+			this.statuses.set(taskId, newStatus)
+
+			if (config) {
+				// Set up timeout with minimum remaining time
+				const timeoutHandle = setTimeout(() => {
+					const currentStatus = this.statuses.get(taskId)
+					if (currentStatus && currentStatus.isActive) {
+						currentStatus.isActive = false
+						this.clearTimeout(taskId)
+						config.onTimeout(taskId)
+					}
+				}, minRemainingMs)
+
+				this.timeouts.set(taskId, timeoutHandle)
+				config.onExtended?.(taskId, actualNewTimeoutMs)
+			}
+
+			return true
+		}
+
+		// Update status but keep original startTime for UI continuity
 		const newStatus: TimeoutStatus = {
 			...status,
 			timeoutMs: newTimeoutMs,
@@ -81,13 +129,43 @@ export class SubtaskTimeoutManager {
 		this.statuses.set(taskId, newStatus)
 
 		if (config) {
-			const adjustedConfig: TimeoutConfig = {
-				...config,
-				timeoutMs: newTimeoutMs - elapsed,
-				warningMs: remainingWarningMs,
+			// Calculate remaining time from the original start time
+			const remainingMs = newTimeoutMs - elapsed
+			const remainingWarningMsFromStart = remainingWarningMs
+
+			// Set up new warning timeout if needed
+			if (
+				remainingWarningMsFromStart &&
+				remainingWarningMsFromStart > 0 &&
+				config.onWarning &&
+				!newStatus.hasWarned
+			) {
+				const warningTimeout = setTimeout(() => {
+					const currentStatus = this.statuses.get(taskId)
+					if (currentStatus && currentStatus.isActive && !currentStatus.hasWarned) {
+						currentStatus.hasWarned = true
+						const remainingMs = Math.max(
+							0,
+							currentStatus.timeoutMs - (Date.now() - currentStatus.startTime),
+						)
+						config.onWarning!(taskId, remainingMs)
+					}
+				}, remainingWarningMsFromStart)
+
+				this.warnings.set(taskId, warningTimeout)
 			}
 
-			this.startTimeout(taskId, adjustedConfig)
+			// Set up new timeout
+			const timeoutHandle = setTimeout(() => {
+				const currentStatus = this.statuses.get(taskId)
+				if (currentStatus && currentStatus.isActive) {
+					currentStatus.isActive = false
+					this.clearTimeout(taskId)
+					config.onTimeout(taskId)
+				}
+			}, remainingMs)
+
+			this.timeouts.set(taskId, timeoutHandle)
 			config.onExtended?.(taskId, newTimeoutMs)
 		}
 

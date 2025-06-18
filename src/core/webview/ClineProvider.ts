@@ -676,16 +676,16 @@ export class ClineProvider
 		const timeoutStatus = cline.getSubtaskTimeoutStatus(taskId)
 
 		if (timeoutStatus) {
-			const { maxSubtaskTimeoutExtensions } = await this.getState()
-
 			const subtaskTimeoutStatus = {
 				taskId,
 				isActive: cline.isSubtaskTimeoutActive(taskId),
 				timeoutMs: timeoutStatus.timeoutMs,
 				startTime: timeoutStatus.startTime,
-				warningThresholdPercent: (timeoutStatus.warningMs / timeoutStatus.timeoutMs) * 100,
-				extensionsUsed: timeoutStatus.extensionsUsed || 0,
-				maxExtensions: maxSubtaskTimeoutExtensions || 3,
+				warningThresholdPercent: timeoutStatus.warningMs
+					? (timeoutStatus.warningMs / timeoutStatus.timeoutMs) * 100
+					: 80,
+				extensionsUsed: 0, // Default value since not currently tracked
+				maxExtensions: 3, // Default value
 			}
 
 			await this.postMessageToWebview({

@@ -1660,6 +1660,28 @@ export const webviewMessageHandler = async (
 				}
 			}
 			break
+		case "timeoutExpired":
+			if (message.taskId) {
+				try {
+					console.log(`[TIMEOUT DEBUG] Received timeoutExpired notification for taskId: ${message.taskId}`)
+					// Find the task that manages this timeout (could be current task or a parent task)
+					const timeoutManagingTask = findTimeoutManagingTask(provider, message.taskId)
+					if (timeoutManagingTask) {
+						console.log(
+							`[TIMEOUT DEBUG] Found timeout managing task for expiry: ${timeoutManagingTask.taskId}`,
+						)
+						// Trigger the timeout handler - this should match the backend timeout behavior
+						timeoutManagingTask.handleSubtaskTimeout(message.taskId)
+					} else {
+						provider.log(`No task found that manages timeout for expired task ${message.taskId}`)
+					}
+				} catch (error) {
+					provider.log(
+						`Failed to handle timeout expiry: ${JSON.stringify(error, Object.getOwnPropertyNames(error), 2)}`,
+					)
+				}
+			}
+			break
 		case "defaultSubtaskTimeoutMs":
 			await updateGlobalState("defaultSubtaskTimeoutMs", message.value)
 			await provider.postStateToWebview()

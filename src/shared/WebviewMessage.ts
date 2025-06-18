@@ -74,6 +74,7 @@ export interface WebviewMessage {
 		| "autoCondenseContextPercent"
 		| "extendSubtaskTimeout"
 		| "clearSubtaskTimeout"
+		| "timeoutExpired"
 		| "defaultSubtaskTimeoutMs"
 		| "subtaskTimeoutWarningPercent"
 		| "maxSubtaskTimeoutExtensions"

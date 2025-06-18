@@ -2018,6 +2018,17 @@ export class Task extends EventEmitter<ClineEvents> {
 		this.timeoutManager.clearAll()
 	}
 
+	public handleSubtaskTimeout(subtaskId: string): void {
+		console.log(`[TIMEOUT DEBUG] Task ${this.taskId} handling timeout expiry for subtask ${subtaskId}`)
+		// This method is called when the UI detects timeout expiry
+		// It should trigger the same logic as the onTimeout callback
+		this.emit("taskTimedOut", subtaskId)
+		const provider = this.providerRef.deref()
+		if (provider) {
+			provider.abortSubtask(subtaskId)
+		}
+	}
+
 	// Getters
 
 	public get cwd() {

@@ -109,18 +109,12 @@ const TaskHeader = ({
 				{/* Collapsed state: Track context and cost if we have any */}
 				{!isTaskExpanded && (
 					<div className="w-full flex flex-col gap-1">
-						{/* Debug: Always show timeout bar in v5 to test UI changes */}
-						{subtaskTimeoutStatus?.isActive ? (
+						{subtaskTimeoutStatus?.isActive && (
 							<SubtaskTimeoutProgress
 								taskId={subtaskTimeoutStatus.taskId}
 								timeoutMs={subtaskTimeoutStatus.timeoutMs}
 								startTime={subtaskTimeoutStatus.startTime}
-								warningPercent={subtaskTimeoutStatus.warningThresholdPercent}
 							/>
-						) : (
-							<div className="p-2 bg-blue-500/10 border border-blue-500/20 rounded-md text-xs">
-								🚀 Roo Code v6 - Ready for timeout testing (create subtask with timeout_seconds)
-							</div>
 						)}
 						{contextWindow > 0 && (
 							<div className={`w-full flex flex-row items-center gap-1 h-auto`}>
@@ -159,19 +153,7 @@ const TaskHeader = ({
 						{task.images && task.images.length > 0 && <Thumbnails images={task.images} />}
 
 						<div className="flex flex-col gap-1">
-							{/* Debug: Always show timeout bar in v5 to test UI changes */}
-							{subtaskTimeoutStatus?.isActive ? (
-								<SubtaskTimeoutProgress
-									taskId={subtaskTimeoutStatus.taskId}
-									timeoutMs={subtaskTimeoutStatus.timeoutMs}
-									startTime={subtaskTimeoutStatus.startTime}
-									warningPercent={subtaskTimeoutStatus.warningThresholdPercent}
-								/>
-							) : (
-								<div className="p-2 bg-blue-500/10 border border-blue-500/20 rounded-md text-xs">
-									🚀 Roo Code v6 - Ready for timeout testing (create subtask with timeout_seconds)
-								</div>
-							)}
+							{/* Timeout bar is only shown in collapsed state to avoid duplicates */}
 							{isTaskExpanded && contextWindow > 0 && (
 								<div
 									className={`w-full flex ${windowWidth < 400 ? "flex-col" : "flex-row"} gap-1 h-auto`}>
