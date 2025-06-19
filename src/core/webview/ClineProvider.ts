@@ -646,6 +646,7 @@ export class ClineProvider
 	private setupTimeoutEventListeners(cline: Task) {
 		// Listen for timeout events and send status updates to webview
 		cline.on("taskTimeoutStarted", (taskId: string) => {
+			console.log(`[TIMEOUT] Timeout started for task ${taskId}, sending status update to webview`)
 			this.sendTimeoutStatusUpdate(cline, taskId)
 		})
 

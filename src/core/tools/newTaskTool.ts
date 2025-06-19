@@ -109,6 +109,7 @@ export async function newTaskTool(
 
 			// Start timeout if specified
 			if (timeoutMs) {
+				console.log(`[TIMEOUT] Starting ${timeoutMs}ms timeout for subtask ${newCline.taskId}`)
 				cline.startSubtaskTimeout(newCline.taskId, timeoutMs)
 			}
 
