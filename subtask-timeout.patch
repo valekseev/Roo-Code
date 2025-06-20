@@ -1,0 +1,1565 @@
+diff --git a/.gitignore b/.gitignore
+index 6f6bcd99..dd49c114 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -45,3 +45,7 @@ logs
+ .qodo/
+ .vercel
+ .roo/mcp.json
++
++# Development documentation files
++CLAUDE.md
++timeout.md
+diff --git a/publish.md b/publish.md
+new file mode 100644
+index 00000000..ecd314a1
+--- /dev/null
++++ b/publish.md
+@@ -0,0 +1,48 @@
++# VSIX Package Details
++
++## Version: 3.20.3-v6
++
++Built on: 2025-01-16 19:45:00 UTC
++
++## Key Changes in v6:
++
++- **Changed +5m to +10m button** for longer timeout extensions
++- **Fixed color transitions**: Red at 5 seconds, orange at 20 seconds, blue above 20 seconds
++- **Fixed timeout bar disappearing issues**: Bar now clears when tasks complete or are cancelled
++- **Improved timeout management**: Added task completion and abortion listeners to clear timeouts
++- Debug indicator updated to show "🚀 Roo Code v6 - Ready for timeout testing"
++
++## All Features:
++
++- Always-visible +1m, +10m, X buttons (no warning condition required)
++- No percentage display in timeout progress bar
++- Smooth color transitions based on remaining time (not percentage)
++- Automatic timeout clearing when tasks finish or are manually cancelled
++- Progress bar should continue smoothly during extensions (startTime preserved)
++
++## Bug Fixes:
++
++- Timeout bars now disappear when clicking "Close this task and start a new one"
++- Timeout bars disappear when tasks complete without timeout
++- Added clearAllSubtaskTimeouts() method for comprehensive cleanup
++- Task completion and abortion events now properly clear timeouts
++
++## Installation:
++
++```bash
++# Navigate to the bin directory
++cd /home/ubuntu/src/Roo-Code/bin
++
++# Install the extension
++code --install-extension roo-cline-3.20.3-v6.vsix
++```
++
++## Testing:
++
++1. Look for blue debug message "🚀 Roo Code v6 - Ready for timeout testing" in task header
++2. Create a subtask with timeout_seconds parameter
++3. Verify timeout counter shows with +1m, +10m, X buttons
++4. Test color changes: blue → orange at 20s → red at 5s
++5. Test timeout extensions don't reset progress bar
++6. Test timeout bar disappears when task completes or is cancelled
++7. Check console logs for debugging information
+diff --git a/src/core/task/SubtaskTimeoutManager.ts b/src/core/task/SubtaskTimeoutManager.ts
+index 13e7459a..bb5e11c1 100644
+--- a/src/core/task/SubtaskTimeoutManager.ts
++++ b/src/core/task/SubtaskTimeoutManager.ts
+@@ -66,12 +66,60 @@ export class SubtaskTimeoutManager {
+ 			return false
+ 		}
+ 
+-		this.clearTimeout(taskId)
++		// Clear existing timeout handlers but preserve the original startTime
++		const timeoutHandle = this.timeouts.get(taskId)
++		const warningHandle = this.warnings.get(taskId)
++
++		if (timeoutHandle) {
++			clearTimeout(timeoutHandle)
++			this.timeouts.delete(taskId)
++		}
++
++		if (warningHandle) {
++			clearTimeout(warningHandle)
++			this.warnings.delete(taskId)
++		}
+ 
+ 		const elapsed = Date.now() - status.startTime
+ 		const newTimeoutMs = status.timeoutMs + extensionMs
+ 		const remainingWarningMs = status.warningMs ? Math.max(0, status.warningMs - elapsed) : undefined
+ 
++		// Ensure minimum remaining time of 1 minute (60000ms)
++		const minRemainingMs = 60000
++		const remainingMs = newTimeoutMs - elapsed
++		if (remainingMs < minRemainingMs) {
++			// Adjust newTimeoutMs to ensure minimum remaining time
++			const adjustedTimeoutMs = elapsed + minRemainingMs
++			const actualNewTimeoutMs = adjustedTimeoutMs
++
++			// Update with the adjusted timeout
++			const newStatus: TimeoutStatus = {
++				...status,
++				timeoutMs: actualNewTimeoutMs,
++				hasWarned: elapsed >= (status.warningMs || Infinity),
++			}
++
++			this.statuses.set(taskId, newStatus)
++
++			if (config) {
++				// Set up timeout with minimum remaining time
++				const timeoutHandle = setTimeout(() => {
++					const currentStatus = this.statuses.get(taskId)
++					if (currentStatus && currentStatus.isActive) {
++						currentStatus.isActive = false
++						this.clearTimeout(taskId)
++						config.onTimeout(taskId)
++					}
++				}, minRemainingMs)
++
++				this.timeouts.set(taskId, timeoutHandle)
++				config.onExtended?.(taskId, actualNewTimeoutMs)
++			}
++
++			return true
++		}
++
++		// Update status but keep original startTime for UI continuity
+ 		const newStatus: TimeoutStatus = {
+ 			...status,
+ 			timeoutMs: newTimeoutMs,
+@@ -81,13 +129,43 @@ export class SubtaskTimeoutManager {
+ 		this.statuses.set(taskId, newStatus)
+ 
+ 		if (config) {
+-			const adjustedConfig: TimeoutConfig = {
+-				...config,
+-				timeoutMs: newTimeoutMs - elapsed,
+-				warningMs: remainingWarningMs,
++			// Calculate remaining time from the original start time
++			const remainingMs = newTimeoutMs - elapsed
++			const remainingWarningMsFromStart = remainingWarningMs
++
++			// Set up new warning timeout if needed
++			if (
++				remainingWarningMsFromStart &&
++				remainingWarningMsFromStart > 0 &&
++				config.onWarning &&
++				!newStatus.hasWarned
++			) {
++				const warningTimeout = setTimeout(() => {
++					const currentStatus = this.statuses.get(taskId)
++					if (currentStatus && currentStatus.isActive && !currentStatus.hasWarned) {
++						currentStatus.hasWarned = true
++						const remainingMs = Math.max(
++							0,
++							currentStatus.timeoutMs - (Date.now() - currentStatus.startTime),
++						)
++						config.onWarning!(taskId, remainingMs)
++					}
++				}, remainingWarningMsFromStart)
++
++				this.warnings.set(taskId, warningTimeout)
+ 			}
+ 
+-			this.startTimeout(taskId, adjustedConfig)
++			// Set up new timeout
++			const timeoutHandle = setTimeout(() => {
++				const currentStatus = this.statuses.get(taskId)
++				if (currentStatus && currentStatus.isActive) {
++					currentStatus.isActive = false
++					this.clearTimeout(taskId)
++					config.onTimeout(taskId)
++				}
++			}, remainingMs)
++
++			this.timeouts.set(taskId, timeoutHandle)
+ 			config.onExtended?.(taskId, newTimeoutMs)
+ 		}
+ 
+@@ -143,6 +221,16 @@ export class SubtaskTimeoutManager {
+ 			.map(([taskId]) => taskId)
+ 	}
+ 
++	clearAll(): void {
++		// Clear all active timeouts and set them as inactive
++		for (const [taskId, status] of this.statuses.entries()) {
++			if (status.isActive) {
++				status.isActive = false
++				this.clearTimeout(taskId)
++			}
++		}
++	}
++
+ 	dispose(): void {
+ 		for (const timeoutHandle of this.timeouts.values()) {
+ 			clearTimeout(timeoutHandle)
+diff --git a/src/core/task/Task.ts b/src/core/task/Task.ts
+index c5e0dd82..503eb0e7 100644
+--- a/src/core/task/Task.ts
++++ b/src/core/task/Task.ts
+@@ -99,6 +99,7 @@ export type ClineEvents = {
+ 	taskCompleted: [taskId: string, tokenUsage: TokenUsage, toolUsage: ToolUsage]
+ 	taskTokenUsageUpdated: [taskId: string, tokenUsage: TokenUsage]
+ 	taskToolFailed: [taskId: string, tool: ToolName, error: string]
++	taskTimeoutStarted: [taskId: string]
+ 	taskTimeoutWarning: [taskId: string, remainingMs: number]
+ 	taskTimedOut: [taskId: string]
+ 	taskTimeoutExtended: [taskId: string, newTimeoutMs: number]
+@@ -1952,9 +1953,15 @@ export class Task extends EventEmitter<ClineEvents> {
+ 		}
+ 
+ 		this.timeoutManager.startTimeout(subtaskId, config)
++
++		// Emit timeout started event for initial status update
++		this.emit("taskTimeoutStarted", subtaskId)
+ 	}
+ 
+ 	public extendSubtaskTimeout(subtaskId: string, extensionMs: number): boolean {
++		console.log(
++			`[TIMEOUT DEBUG] Task ${this.taskId} attempting to extend timeout for subtask ${subtaskId} by ${extensionMs}ms`,
++		)
+ 		const config: TimeoutConfig = {
+ 			timeoutMs: 0, // Will be calculated by manager
+ 			onTimeout: (taskId: string) => {
+@@ -1975,11 +1982,15 @@ export class Task extends EventEmitter<ClineEvents> {
+ 			},
+ 		}
+ 
+-		return this.timeoutManager.extendTimeout(subtaskId, extensionMs, config)
++		const result = this.timeoutManager.extendTimeout(subtaskId, extensionMs, config)
++		console.log(`[TIMEOUT DEBUG] Task ${this.taskId} extend timeout result for subtask ${subtaskId}: ${result}`)
++		return result
+ 	}
+ 
+ 	public clearSubtaskTimeout(subtaskId: string): boolean {
++		console.log(`[TIMEOUT DEBUG] Task ${this.taskId} attempting to clear timeout for subtask ${subtaskId}`)
+ 		const result = this.timeoutManager.clearTimeout(subtaskId)
++		console.log(`[TIMEOUT DEBUG] Task ${this.taskId} clear timeout result for subtask ${subtaskId}: ${result}`)
+ 		if (result) {
+ 			this.emit("taskTimeoutCleared", subtaskId)
+ 		}
+@@ -1995,7 +2006,27 @@ export class Task extends EventEmitter<ClineEvents> {
+ 	}
+ 
+ 	public isSubtaskTimeoutActive(subtaskId: string): boolean {
+-		return this.timeoutManager.isActive(subtaskId)
++		const isActive = this.timeoutManager.isActive(subtaskId)
++		console.log(
++			`[TIMEOUT DEBUG] Task ${this.taskId} checking if timeout is active for subtask ${subtaskId}: ${isActive}`,
++		)
++		return isActive
++	}
++
++	public clearAllSubtaskTimeouts(): void {
++		console.log(`[TIMEOUT DEBUG] Task ${this.taskId} clearing all subtask timeouts`)
++		this.timeoutManager.clearAll()
++	}
++
++	public handleSubtaskTimeout(subtaskId: string): void {
++		console.log(`[TIMEOUT DEBUG] Task ${this.taskId} handling timeout expiry for subtask ${subtaskId}`)
++		// This method is called when the UI detects timeout expiry
++		// It should trigger the same logic as the onTimeout callback
++		this.emit("taskTimedOut", subtaskId)
++		const provider = this.providerRef.deref()
++		if (provider) {
++			provider.abortSubtask(subtaskId)
++		}
+ 	}
+ 
+ 	// Getters
+diff --git a/src/core/task/__tests__/SubtaskTimeoutManager.test.ts b/src/core/task/__tests__/SubtaskTimeoutManager.test.ts
+index c33265d1..cdc30510 100644
+--- a/src/core/task/__tests__/SubtaskTimeoutManager.test.ts
++++ b/src/core/task/__tests__/SubtaskTimeoutManager.test.ts
+@@ -1,45 +1,47 @@
+-import { jest } from "@jest/globals"
++import type { Mock } from "vitest"
+ import { SubtaskTimeoutManager, type TimeoutConfig } from "../SubtaskTimeoutManager"
+ 
++vi.useFakeTimers()
++
+ describe("SubtaskTimeoutManager", () => {
+ 	let manager: SubtaskTimeoutManager
+-	let mockOnTimeout: jest.MockedFunction<(taskId: string) => void>
+-	let mockOnWarning: jest.MockedFunction<(taskId: string, remainingMs: number) => void>
++	let mockOnTimeout: Mock
++	let mockOnWarning: Mock
+ 
+ 	beforeEach(() => {
+-		jest.useFakeTimers()
+ 		manager = new SubtaskTimeoutManager()
+-		mockOnTimeout = jest.fn()
+-		mockOnWarning = jest.fn()
++		mockOnTimeout = vi.fn()
++		mockOnWarning = vi.fn()
+ 	})
+ 
+ 	afterEach(() => {
+ 		manager.dispose()
+-		jest.useRealTimers()
++		vi.clearAllTimers()
++		vi.clearAllMocks()
+ 	})
+ 
+ 	describe("startTimeout", () => {
+ 		it("should start a timeout for a task", () => {
+ 			const config: TimeoutConfig = {
+-				timeoutMs: 5000,
++				timeoutMs: 90000, // 90 seconds - above minimum
+ 				onTimeout: mockOnTimeout,
+ 			}
+ 
+ 			manager.startTimeout("task1", config)
+ 
+ 			expect(manager.isActive("task1")).toBe(true)
+-			expect(manager.getTimeRemaining("task1")).toBe(5000)
++			expect(manager.getTimeRemaining("task1")).toBe(90000)
+ 		})
+ 
+ 		it("should call onTimeout when timeout expires", () => {
+ 			const config: TimeoutConfig = {
+-				timeoutMs: 5000,
++				timeoutMs: 90000, // 90 seconds
+ 				onTimeout: mockOnTimeout,
+ 			}
+ 
+ 			manager.startTimeout("task1", config)
+ 
+-			jest.advanceTimersByTime(5000)
++			vi.advanceTimersByTime(90000)
+ 
+ 			expect(mockOnTimeout).toHaveBeenCalledWith("task1")
+ 			expect(manager.isActive("task1")).toBe(false)
+@@ -47,38 +49,38 @@ describe("SubtaskTimeoutManager", () => {
+ 
+ 		it("should call onWarning at the specified time", () => {
+ 			const config: TimeoutConfig = {
+-				timeoutMs: 5000,
+-				warningMs: 2000,
++				timeoutMs: 90000, // 90 seconds
++				warningMs: 30000, // warning at 30 seconds
+ 				onTimeout: mockOnTimeout,
+ 				onWarning: mockOnWarning,
+ 			}
+ 
+ 			manager.startTimeout("task1", config)
+ 
+-			jest.advanceTimersByTime(2000)
++			vi.advanceTimersByTime(30000) // advance to warning time
+ 
+-			expect(mockOnWarning).toHaveBeenCalledWith("task1", 3000)
++			expect(mockOnWarning).toHaveBeenCalledWith("task1", 60000) // 60 seconds remaining
+ 			expect(mockOnTimeout).not.toHaveBeenCalled()
+ 		})
+ 
+ 		it("should replace existing timeout when starting new one for same task", () => {
+ 			const config1: TimeoutConfig = {
+-				timeoutMs: 5000,
++				timeoutMs: 90000, // 90 seconds
+ 				onTimeout: mockOnTimeout,
+ 			}
+ 			const config2: TimeoutConfig = {
+-				timeoutMs: 10000,
++				timeoutMs: 120000, // 120 seconds
+ 				onTimeout: mockOnTimeout,
+ 			}
+ 
+ 			manager.startTimeout("task1", config1)
+ 			manager.startTimeout("task1", config2)
+ 
+-			jest.advanceTimersByTime(5000)
++			vi.advanceTimersByTime(90000) // advance original timeout duration
+ 			expect(mockOnTimeout).not.toHaveBeenCalled()
+ 			expect(manager.isActive("task1")).toBe(true)
+ 
+-			jest.advanceTimersByTime(5000)
++			vi.advanceTimersByTime(30000) // advance remaining 30 seconds
+ 			expect(mockOnTimeout).toHaveBeenCalledWith("task1")
+ 		})
+ 	})
+@@ -86,18 +88,18 @@ describe("SubtaskTimeoutManager", () => {
+ 	describe("extendTimeout", () => {
+ 		it("should extend an active timeout", () => {
+ 			const config: TimeoutConfig = {
+-				timeoutMs: 5000,
++				timeoutMs: 90000, // 90 seconds - above minimum
+ 				onTimeout: mockOnTimeout,
+-				onExtended: jest.fn(),
++				onExtended: vi.fn(),
+ 			}
+ 
+ 			manager.startTimeout("task1", config)
+-			jest.advanceTimersByTime(2000)
++			vi.advanceTimersByTime(10000) // advance 10 seconds
+ 
+-			const result = manager.extendTimeout("task1", 3000, config)
++			const result = manager.extendTimeout("task1", 30000, config) // extend by 30 seconds
+ 
+ 			expect(result).toBe(true)
+-			expect(manager.getTimeRemaining("task1")).toBeGreaterThan(5000)
++			expect(manager.getTimeRemaining("task1")).toBeGreaterThan(100000) // should be ~110 seconds remaining
+ 		})
+ 
+ 		it("should return false for inactive task", () => {
+@@ -111,24 +113,43 @@ describe("SubtaskTimeoutManager", () => {
+ 		})
+ 
+ 		it("should call onExtended callback when extending", () => {
+-			const mockOnExtended = jest.fn()
++			const mockOnExtended = vi.fn()
+ 			const config: TimeoutConfig = {
+-				timeoutMs: 5000,
++				timeoutMs: 90000, // 90 seconds - above minimum
+ 				onTimeout: mockOnTimeout,
+ 				onExtended: mockOnExtended,
+ 			}
+ 
+ 			manager.startTimeout("task1", config)
+-			manager.extendTimeout("task1", 3000, config)
++			manager.extendTimeout("task1", 30000, config) // 30 seconds extension
+ 
+-			expect(mockOnExtended).toHaveBeenCalledWith("task1", 8000)
++			expect(mockOnExtended).toHaveBeenCalledWith("task1", 120000) // 90 + 30 = 120 seconds
++		})
++
++		it("should enforce minimum remaining time when extending", () => {
++			const mockOnExtended = vi.fn()
++			const config: TimeoutConfig = {
++				timeoutMs: 90000, // 90 seconds
++				onTimeout: mockOnTimeout,
++				onExtended: mockOnExtended,
++			}
++
++			manager.startTimeout("task1", config)
++			vi.advanceTimersByTime(85000) // advance to 5 seconds remaining
++
++			// Try to reduce by 10 seconds (would go below 1 minute minimum)
++			const result = manager.extendTimeout("task1", -10000, config)
++
++			expect(result).toBe(true)
++			// Should be adjusted to ensure 1 minute minimum
++			expect(manager.getTimeRemaining("task1")).toBe(60000) // 1 minute minimum
+ 		})
+ 	})
+ 
+ 	describe("clearTimeout", () => {
+ 		it("should clear an active timeout", () => {
+ 			const config: TimeoutConfig = {
+-				timeoutMs: 5000,
++				timeoutMs: 90000, // 90 seconds
+ 				onTimeout: mockOnTimeout,
+ 			}
+ 
+@@ -138,7 +159,7 @@ describe("SubtaskTimeoutManager", () => {
+ 			expect(result).toBe(true)
+ 			expect(manager.isActive("task1")).toBe(false)
+ 
+-			jest.advanceTimersByTime(5000)
++			vi.advanceTimersByTime(90000)
+ 			expect(mockOnTimeout).not.toHaveBeenCalled()
+ 		})
+ 
+@@ -151,15 +172,15 @@ describe("SubtaskTimeoutManager", () => {
+ 	describe("getTimeRemaining", () => {
+ 		it("should return correct remaining time", () => {
+ 			const config: TimeoutConfig = {
+-				timeoutMs: 5000,
++				timeoutMs: 90000, // 90 seconds
+ 				onTimeout: mockOnTimeout,
+ 			}
+ 
+ 			manager.startTimeout("task1", config)
+-			jest.advanceTimersByTime(2000)
++			vi.advanceTimersByTime(20000) // advance 20 seconds
+ 
+ 			const remaining = manager.getTimeRemaining("task1")
+-			expect(remaining).toBe(3000)
++			expect(remaining).toBe(70000) // 70 seconds remaining
+ 		})
+ 
+ 		it("should return 0 for inactive task", () => {
+@@ -171,7 +192,7 @@ describe("SubtaskTimeoutManager", () => {
+ 	describe("getActiveTimeouts", () => {
+ 		it("should return list of active timeout task IDs", () => {
+ 			const config: TimeoutConfig = {
+-				timeoutMs: 5000,
++				timeoutMs: 90000, // 90 seconds
+ 				onTimeout: mockOnTimeout,
+ 			}
+ 
+@@ -185,14 +206,14 @@ describe("SubtaskTimeoutManager", () => {
+ 
+ 		it("should not include expired timeouts", () => {
+ 			const config: TimeoutConfig = {
+-				timeoutMs: 5000,
++				timeoutMs: 90000, // 90 seconds
+ 				onTimeout: mockOnTimeout,
+ 			}
+ 
+ 			manager.startTimeout("task1", config)
+ 			manager.startTimeout("task2", config)
+ 
+-			jest.advanceTimersByTime(5000)
++			vi.advanceTimersByTime(90000) // advance full timeout duration
+ 
+ 			const active = manager.getActiveTimeouts()
+ 			expect(active).toHaveLength(0)
+@@ -202,7 +223,7 @@ describe("SubtaskTimeoutManager", () => {
+ 	describe("dispose", () => {
+ 		it("should clear all timeouts and statuses", () => {
+ 			const config: TimeoutConfig = {
+-				timeoutMs: 5000,
++				timeoutMs: 90000, // 90 seconds
+ 				onTimeout: mockOnTimeout,
+ 			}
+ 
+@@ -215,7 +236,7 @@ describe("SubtaskTimeoutManager", () => {
+ 			expect(manager.isActive("task1")).toBe(false)
+ 			expect(manager.isActive("task2")).toBe(false)
+ 
+-			jest.advanceTimersByTime(5000)
++			vi.advanceTimersByTime(90000)
+ 			expect(mockOnTimeout).not.toHaveBeenCalled()
+ 		})
+ 	})
+diff --git a/src/core/tools/newTaskTool.ts b/src/core/tools/newTaskTool.ts
+index b11f24b3..8a6e56a7 100644
+--- a/src/core/tools/newTaskTool.ts
++++ b/src/core/tools/newTaskTool.ts
+@@ -101,10 +101,15 @@ export async function newTaskTool(
+ 			await delay(500)
+ 
+ 			const newCline = await provider.initClineWithTask(unescapedMessage, undefined, cline, timeoutMs)
++			if (!newCline) {
++				pushToolResult(t("tools:newTask.errors.policy_restriction"))
++				return
++			}
+ 			cline.emit("taskSpawned", newCline.taskId)
+ 
+ 			// Start timeout if specified
+ 			if (timeoutMs) {
++				console.log(`[TIMEOUT] Starting ${timeoutMs}ms timeout for subtask ${newCline.taskId}`)
+ 				cline.startSubtaskTimeout(newCline.taskId, timeoutMs)
+ 			}
+ 
+diff --git a/src/core/webview/ClineProvider.ts b/src/core/webview/ClineProvider.ts
+index 7a8a186a..207f36d6 100644
+--- a/src/core/webview/ClineProvider.ts
++++ b/src/core/webview/ClineProvider.ts
+@@ -166,6 +166,9 @@ export class ClineProvider
+ 		// Add this cline instance into the stack that represents the order of all the called tasks.
+ 		this.clineStack.push(cline)
+ 
++		// Set up timeout event listeners
++		this.setupTimeoutEventListeners(cline)
++
+ 		// Ensure getState() resolves correctly.
+ 		const state = await this.getState()
+ 
+@@ -226,6 +229,18 @@ export class ClineProvider
+ 	// this is used when a sub task is finished and the parent task needs to be resumed
+ 	async finishSubTask(lastMessage: string) {
+ 		console.log(`[subtasks] finishing subtask ${lastMessage}`)
++
++		// Get the current subtask before removing it
++		const cline = this.getCurrentCline()
++
++		// Clear timeout if this task has one managed by its parent
++		if (cline && cline.parentTask) {
++			const timeoutCleared = cline.parentTask.clearSubtaskTimeout(cline.taskId)
++			if (timeoutCleared) {
++				console.log(`[subtasks] cleared timeout for finished task ${cline.taskId}`)
++			}
++		}
++
+ 		// remove the last cline instance from the stack (this is the finished sub task)
+ 		await this.removeClineFromStack()
+ 		// resume the last cline instance in the stack (if it exists - this is the 'parent' calling task)
+@@ -628,6 +643,85 @@ export class ClineProvider
+ 		await this.view?.webview.postMessage(message)
+ 	}
+ 
++	private setupTimeoutEventListeners(cline: Task) {
++		// Listen for timeout events and send status updates to webview
++		cline.on("taskTimeoutStarted", (taskId: string) => {
++			console.log(`[TIMEOUT] Timeout started for task ${taskId}, sending status update to webview`)
++			this.sendTimeoutStatusUpdate(cline, taskId)
++		})
++
++		cline.on("taskTimeoutWarning", (taskId: string, remainingMs: number) => {
++			this.sendTimeoutStatusUpdate(cline, taskId)
++		})
++
++		cline.on("taskTimedOut", (taskId: string) => {
++			this.sendTimeoutStatusUpdate(cline, taskId)
++		})
++
++		cline.on("taskTimeoutExtended", (taskId: string, newTimeoutMs: number) => {
++			this.sendTimeoutStatusUpdate(cline, taskId)
++		})
++
++		cline.on("taskTimeoutCleared", (taskId: string) => {
++			this.sendTimeoutStatusUpdate(cline, taskId)
++		})
++
++		// Listen for task completion to clear any active timeouts
++		cline.on("taskCompleted", (taskId: string) => {
++			// Clear any timeouts this task was managing for its subtasks
++			cline.clearAllSubtaskTimeouts()
++
++			// Send update to clear UI
++			this.sendTimeoutStatusUpdate(cline, taskId)
++		})
++
++		// Listen for task abortion to clear any active timeouts
++		cline.on("taskAborted", () => {
++			// Clear any timeouts this task was managing
++			cline.clearAllSubtaskTimeouts()
++
++			// Send update to clear UI for this task
++			this.sendTimeoutStatusUpdate(cline, cline.taskId)
++		})
++	}
++
++	private async sendTimeoutStatusUpdate(cline: Task, taskId: string) {
++		const timeoutStatus = cline.getSubtaskTimeoutStatus(taskId)
++
++		if (timeoutStatus) {
++			const subtaskTimeoutStatus = {
++				taskId,
++				isActive: cline.isSubtaskTimeoutActive(taskId),
++				timeoutMs: timeoutStatus.timeoutMs,
++				startTime: timeoutStatus.startTime,
++				warningThresholdPercent: timeoutStatus.warningMs
++					? (timeoutStatus.warningMs / timeoutStatus.timeoutMs) * 100
++					: 80,
++				extensionsUsed: 0, // Default value since not currently tracked
++				maxExtensions: 3, // Default value
++			}
++
++			await this.postMessageToWebview({
++				type: "subtaskTimeoutUpdate",
++				timeoutStatus: subtaskTimeoutStatus,
++			})
++		} else {
++			// Timeout was cleared or expired
++			await this.postMessageToWebview({
++				type: "subtaskTimeoutUpdate",
++				timeoutStatus: {
++					taskId,
++					isActive: false,
++					timeoutMs: 0,
++					startTime: 0,
++					warningThresholdPercent: 80,
++					extensionsUsed: 0,
++					maxExtensions: 3,
++				},
++			})
++		}
++	}
++
+ 	private async getHMRHtmlContent(webview: vscode.Webview): Promise<string> {
+ 		// Try to read the port from the file
+ 		let localPort = "5173" // Default fallback
+@@ -992,6 +1086,14 @@ export class ClineProvider
+ 
+ 		console.log(`[subtasks] cancelling task ${cline.taskId}.${cline.instanceId}`)
+ 
++		// Clear timeout if this task has one managed by its parent
++		if (cline.parentTask) {
++			const timeoutCleared = cline.parentTask.clearSubtaskTimeout(cline.taskId)
++			if (timeoutCleared) {
++				console.log(`[subtasks] cleared timeout for cancelled task ${cline.taskId}`)
++			}
++		}
++
+ 		const { historyItem } = await this.getTaskWithId(cline.taskId)
+ 		// Preserve parent and root task information for history item.
+ 		const rootTask = cline.rootTask
+diff --git a/src/core/webview/webviewMessageHandler.ts b/src/core/webview/webviewMessageHandler.ts
+index bad0c1cc..cfd51826 100644
+--- a/src/core/webview/webviewMessageHandler.ts
++++ b/src/core/webview/webviewMessageHandler.ts
+@@ -44,6 +44,56 @@ import { getCommand } from "../../utils/commands"
+ const ALLOWED_VSCODE_SETTINGS = new Set(["terminal.integrated.inheritEnv"])
+ 
+ import { MarketplaceManager, MarketplaceItemType } from "../../services/marketplace"
++import { Task } from "../task/Task"
++
++/**
++ * Finds the task that manages the timeout for a given subtask ID.
++ * This could be the current task itself, or a parent task in the task hierarchy.
++ */
++function findTimeoutManagingTask(provider: ClineProvider, targetTaskId: string): Task | undefined {
++	const currentTask = provider.getCurrentCline()
++	if (!currentTask) {
++		console.log(`[TIMEOUT DEBUG] No current task found`)
++		return undefined
++	}
++
++	console.log(`[TIMEOUT DEBUG] Looking for timeout managing task for targetTaskId: ${targetTaskId}`)
++	console.log(`[TIMEOUT DEBUG] Current task ID: ${currentTask.taskId}`)
++	console.log(`[TIMEOUT DEBUG] Current task has parent: ${!!currentTask.parentTask}`)
++
++	// Check if the current task manages this timeout
++	const currentTaskManagesTimeout = currentTask.isSubtaskTimeoutActive(targetTaskId)
++	console.log(`[TIMEOUT DEBUG] Current task manages timeout for ${targetTaskId}: ${currentTaskManagesTimeout}`)
++	if (currentTaskManagesTimeout) {
++		return currentTask
++	}
++
++	// Walk up the parent hierarchy to find the timeout-managing task
++	let parentTask = currentTask.parentTask
++	let level = 1
++	while (parentTask) {
++		console.log(`[TIMEOUT DEBUG] Checking parent level ${level}, parent task ID: ${parentTask.taskId}`)
++		const parentManagesTimeout = parentTask.isSubtaskTimeoutActive(targetTaskId)
++		console.log(
++			`[TIMEOUT DEBUG] Parent level ${level} manages timeout for ${targetTaskId}: ${parentManagesTimeout}`,
++		)
++		if (parentManagesTimeout) {
++			return parentTask
++		}
++		parentTask = parentTask.parentTask
++		level++
++	}
++
++	// If not found in parents, check if this is the current task's own timeout
++	if (currentTask.taskId === targetTaskId && currentTask.parentTask) {
++		console.log(`[TIMEOUT DEBUG] Target task ID matches current task ID, returning parent task`)
++		// This task's timeout is managed by its parent
++		return currentTask.parentTask
++	}
++
++	console.log(`[TIMEOUT DEBUG] No timeout managing task found for ${targetTaskId}`)
++	return undefined
++}
+ 
+ export const webviewMessageHandler = async (
+ 	provider: ClineProvider,
+@@ -1555,15 +1605,24 @@ export const webviewMessageHandler = async (
+ 		case "extendSubtaskTimeout":
+ 			if (message.taskId && typeof message.extensionMs === "number") {
+ 				try {
+-					const currentTask = provider.getCurrentCline()
+-					if (currentTask) {
+-						const success = currentTask.extendSubtaskTimeout(message.taskId, message.extensionMs)
++					console.log(
++						`[TIMEOUT DEBUG] Received extendSubtaskTimeout request for taskId: ${message.taskId}, extensionMs: ${message.extensionMs}`,
++					)
++					// Find the task that manages this timeout (could be current task or a parent task)
++					const timeoutManagingTask = findTimeoutManagingTask(provider, message.taskId)
++					if (timeoutManagingTask) {
++						console.log(`[TIMEOUT DEBUG] Found timeout managing task: ${timeoutManagingTask.taskId}`)
++						const success = timeoutManagingTask.extendSubtaskTimeout(message.taskId, message.extensionMs)
++						console.log(`[TIMEOUT DEBUG] Extend timeout result: ${success}`)
+ 						if (!success) {
+ 							provider.log(
+ 								`Failed to extend subtask timeout: task ${message.taskId} not found or inactive`,
+ 							)
+ 							vscode.window.showWarningMessage(t("common:errors.subtask_timeout_not_found"))
+ 						}
++					} else {
++						provider.log(`No task found that manages timeout for task ${message.taskId}`)
++						vscode.window.showWarningMessage(t("common:errors.subtask_timeout_not_found"))
+ 					}
+ 				} catch (error) {
+ 					provider.log(
+@@ -1576,13 +1635,22 @@ export const webviewMessageHandler = async (
+ 		case "clearSubtaskTimeout":
+ 			if (message.taskId) {
+ 				try {
+-					const currentTask = provider.getCurrentCline()
+-					if (currentTask) {
+-						const success = currentTask.clearSubtaskTimeout(message.taskId)
++					console.log(`[TIMEOUT DEBUG] Received clearSubtaskTimeout request for taskId: ${message.taskId}`)
++					// Find the task that manages this timeout (could be current task or a parent task)
++					const timeoutManagingTask = findTimeoutManagingTask(provider, message.taskId)
++					if (timeoutManagingTask) {
++						console.log(
++							`[TIMEOUT DEBUG] Found timeout managing task for clear: ${timeoutManagingTask.taskId}`,
++						)
++						const success = timeoutManagingTask.clearSubtaskTimeout(message.taskId)
++						console.log(`[TIMEOUT DEBUG] Clear timeout result: ${success}`)
+ 						if (!success) {
+ 							provider.log(`Failed to clear subtask timeout: task ${message.taskId} not found`)
+ 							vscode.window.showWarningMessage(t("common:errors.subtask_timeout_not_found"))
+ 						}
++					} else {
++						provider.log(`No task found that manages timeout for task ${message.taskId}`)
++						vscode.window.showWarningMessage(t("common:errors.subtask_timeout_not_found"))
+ 					}
+ 				} catch (error) {
+ 					provider.log(
+@@ -1592,6 +1660,28 @@ export const webviewMessageHandler = async (
+ 				}
+ 			}
+ 			break
++		case "timeoutExpired":
++			if (message.taskId) {
++				try {
++					console.log(`[TIMEOUT DEBUG] Received timeoutExpired notification for taskId: ${message.taskId}`)
++					// Find the task that manages this timeout (could be current task or a parent task)
++					const timeoutManagingTask = findTimeoutManagingTask(provider, message.taskId)
++					if (timeoutManagingTask) {
++						console.log(
++							`[TIMEOUT DEBUG] Found timeout managing task for expiry: ${timeoutManagingTask.taskId}`,
++						)
++						// Trigger the timeout handler - this should match the backend timeout behavior
++						timeoutManagingTask.handleSubtaskTimeout(message.taskId)
++					} else {
++						provider.log(`No task found that manages timeout for expired task ${message.taskId}`)
++					}
++				} catch (error) {
++					provider.log(
++						`Failed to handle timeout expiry: ${JSON.stringify(error, Object.getOwnPropertyNames(error), 2)}`,
++					)
++				}
++			}
++			break
+ 		case "defaultSubtaskTimeoutMs":
+ 			await updateGlobalState("defaultSubtaskTimeoutMs", message.value)
+ 			await provider.postStateToWebview()
+diff --git a/src/package.json b/src/package.json
+index ef8a8f19..f6c7027b 100644
+--- a/src/package.json
++++ b/src/package.json
+@@ -3,7 +3,7 @@
+ 	"displayName": "%extension.displayName%",
+ 	"description": "%extension.description%",
+ 	"publisher": "RooVeterinaryInc",
+-	"version": "3.21.0",
++	"version": "3.21.0-v18",
+ 	"icon": "assets/icons/icon.png",
+ 	"galleryBanner": {
+ 		"color": "#617A91",
+diff --git a/src/shared/ExtensionMessage.ts b/src/shared/ExtensionMessage.ts
+index ac19ba0e..a61bb04f 100644
+--- a/src/shared/ExtensionMessage.ts
++++ b/src/shared/ExtensionMessage.ts
+@@ -32,6 +32,22 @@ export interface IndexingStatusUpdateMessage {
+ 	values: IndexingStatus
+ }
+ 
++// Subtask timeout status types
++export interface SubtaskTimeoutStatus {
++	taskId: string
++	isActive: boolean
++	timeoutMs: number
++	startTime: number
++	warningThresholdPercent: number
++	extensionsUsed: number
++	maxExtensions: number
++}
++
++export interface SubtaskTimeoutUpdateMessage {
++	type: "subtaskTimeoutUpdate"
++	timeoutStatus: SubtaskTimeoutStatus
++}
++
+ export interface LanguageModelChatSelector {
+ 	vendor?: string
+ 	family?: string
+@@ -90,6 +106,7 @@ export interface ExtensionMessage {
+ 		| "indexCleared"
+ 		| "codebaseIndexConfig"
+ 		| "marketplaceInstallResult"
++		| "subtaskTimeoutUpdate"
+ 	text?: string
+ 	payload?: any // Add a generic payload for now, can refine later
+ 	action?:
+@@ -136,6 +153,7 @@ export interface ExtensionMessage {
+ 	userInfo?: CloudUserInfo
+ 	organizationAllowList?: OrganizationAllowList
+ 	tab?: string
++	timeoutStatus?: SubtaskTimeoutStatus
+ }
+ 
+ export type ExtensionState = Pick<
+@@ -250,6 +268,7 @@ export type ExtensionState = Pick<
+ 	autoCondenseContextPercent: number
+ 	marketplaceItems?: MarketplaceItem[]
+ 	marketplaceInstalledMetadata?: { project: Record<string, any>; global: Record<string, any> }
++	subtaskTimeoutStatus?: SubtaskTimeoutStatus
+ }
+ 
+ export interface ClineSayTool {
+diff --git a/src/shared/WebviewMessage.ts b/src/shared/WebviewMessage.ts
+index 9fa84e6d..8e27c3a8 100644
+--- a/src/shared/WebviewMessage.ts
++++ b/src/shared/WebviewMessage.ts
+@@ -74,6 +74,7 @@ export interface WebviewMessage {
+ 		| "autoCondenseContextPercent"
+ 		| "extendSubtaskTimeout"
+ 		| "clearSubtaskTimeout"
++		| "timeoutExpired"
+ 		| "defaultSubtaskTimeoutMs"
+ 		| "subtaskTimeoutWarningPercent"
+ 		| "maxSubtaskTimeoutExtensions"
+diff --git a/timeout.md b/timeout.md
+new file mode 100644
+index 00000000..22403688
+--- /dev/null
++++ b/timeout.md
+@@ -0,0 +1,250 @@
++# Subtask Timeout Feature Implementation
++
++## Overview
++
++This document summarizes the complete implementation of the subtask timeout functionality in Roo Code, including all design decisions, technical implementation details, and bug fixes made during development.
++
++## Feature Description
++
++The subtask timeout feature provides visual feedback and management controls for subtasks that have timeout constraints. When a subtask is created with a `timeout_seconds` parameter, a timeout progress bar appears in the task header showing:
++
++- Real-time countdown timer
++- Visual progress bar with color-coded urgency levels
++- Always-visible control buttons for timeout management
++- Automatic cleanup when tasks complete or are cancelled
++
++## Design Decisions
++
++### 1. UI/UX Design
++
++**Always-Visible Controls**
++
++- **Decision**: Show +1m, +10m, and X buttons at all times, not just during warning periods
++- **Rationale**: Users should be able to extend or cancel timeouts proactively, not just reactively when time is running out
++
++**Button Configuration**
++
++- **Decision**: Use +1m and +10m buttons instead of generic "extend" button
++- **Rationale**: Specific time increments are more user-friendly and predictable than generic extensions
++
++**No Percentage Display**
++
++- **Decision**: Show only time remaining (e.g., "2:30 remaining") without percentage values
++- **Rationale**: Time is more meaningful to users than abstract percentages
++
++**Color-Coded Urgency**
++
++- **Decision**: Use time-based (not percentage-based) color transitions:
++    - Blue: >20 seconds remaining (normal)
++    - Orange: 20-5 seconds remaining (warning)
++    - Red: ≤5 seconds remaining (urgent)
++- **Rationale**: Fixed time thresholds are more intuitive than percentage-based warnings
++
++### 2. Technical Architecture
++
++**Event-Driven Design**
++
++- **Decision**: Use EventEmitter pattern for timeout state communication
++- **Rationale**: Decouples timeout management from UI updates, allowing multiple listeners
++
++**Hierarchical Task Management**
++
++- **Decision**: Parent tasks manage timeouts for their child subtasks
++- **Rationale**: Maintains clear ownership and prevents orphaned timeouts
++
++**State Preservation During Extensions**
++
++- **Decision**: Keep original `startTime` and extend `timeoutMs` during extensions
++- **Rationale**: Allows progress bar to continue smoothly without resetting
++
++## Technical Implementation
++
++### 1. Core Components
++
++#### SubtaskTimeoutManager (`src/core/task/SubtaskTimeoutManager.ts`)
++
++- Manages timeout lifecycle (start, extend, clear, dispose)
++- Maintains timeout status and handles warning thresholds
++- Provides cleanup methods for comprehensive timeout management
++
++#### Task Integration (`src/core/task/Task.ts`)
++
++- Integrates timeout manager into task lifecycle
++- Emits timeout events for UI communication
++- Handles timeout operations with comprehensive debugging
++
++#### ClineProvider Integration (`src/core/webview/ClineProvider.ts`)
++
++- Listens for timeout events and forwards to UI
++- Manages task completion and abortion events
++- Provides timeout status updates to webview
++
++#### UI Component (`webview-ui/src/components/chat/SubtaskTimeoutProgress.tsx`)
++
++- Displays real-time countdown and progress bar
++- Handles user interactions (extend, cancel)
++- Implements color-coded urgency levels
++
++### 2. Key Methods
++
++#### Timeout Management
++
++```typescript
++// Start a timeout
++startSubtaskTimeout(subtaskId: string, timeoutMs: number): void
++
++// Extend existing timeout
++extendSubtaskTimeout(subtaskId: string, extensionMs: number): boolean
++
++// Clear specific timeout
++clearSubtaskTimeout(subtaskId: string): boolean
++
++// Clear all timeouts (for task completion/abortion)
++clearAllSubtaskTimeouts(): void
++```
++
++#### Event System
++
++```typescript
++// Timeout lifecycle events
++;"taskTimeoutStarted" |
++	"taskTimeoutWarning" |
++	"taskTimeoutExtended" |
++	"taskTimeoutCleared" |
++	"taskTimedOut" |
++	"taskCompleted" |
++	"taskAborted"
++```
++
++### 3. Message Flow
++
++1. **Timeout Start**: Task → SubtaskTimeoutManager → Event → ClineProvider → Webview
++2. **User Action**: Webview → ClineProvider → Task → SubtaskTimeoutManager → Event → Webview
++3. **Task Completion**: Task → Event → ClineProvider → Clear All Timeouts → Webview
++
++## Implementation History
++
++### Version 3.20.3-v1: Initial Integration
++
++- Connected existing `SubtaskTimeoutProgress` component to main chat interface
++- Added timeout status to `ExtensionState` for frontend communication
++- Created message types for backend-frontend timeout communication
++
++### Version 3.20.3-v2: Error Fixes
++
++- Added comprehensive debugging logging
++- Fixed task hierarchy navigation with `findTimeoutManagingTask()` function
++- Resolved "errors.subtask_timeout_not_found" by routing operations to parent tasks
++
++### Version 3.20.3-v3: UI Improvements
++
++- Made timeout controls always visible (removed warning condition)
++- Added specific +1m/+5m buttons instead of generic extend
++- Removed percentage display from timeout bar
++- Added manual subtask cancellation support
++
++### Version 3.20.3-v4: Debugging Enhancements
++
++- Enhanced debugging with task hierarchy logging
++- Fixed timeout extension error handling
++- Added timeout clearing for manually cancelled tasks
++
++### Version 3.20.3-v5: Version Verification
++
++- Added debug indicator for version verification
++- Blue debug message shows when no timeout is active
++- Helps users confirm correct version installation
++
++### Version 3.20.3-v6: Final Improvements
++
++- Changed +5m to +10m for longer extensions
++- Fixed color transitions (yellow → orange for consistency)
++- Implemented proper timeout cleanup on task completion/abortion
++- Added `clearAllSubtaskTimeouts()` for comprehensive cleanup
++
++## Bug Fixes
++
++### 1. Timeout Extension Errors
++
++**Problem**: "errors.subtask_timeout_not_found" when extending timeouts
++**Solution**: Implemented `findTimeoutManagingTask()` to navigate task hierarchy and find the correct parent task managing the timeout
++
++### 2. Progress Bar Reset
++
++**Problem**: Progress bar would reset to 0% when timeout was extended
++**Solution**: Preserved original `startTime` in timeout status, only extending `timeoutMs`
++
++### 3. Persistent Timeout Bars
++
++**Problem**: Timeout bars wouldn't disappear when tasks completed or were cancelled
++**Solution**: Added event listeners for `taskCompleted` and `taskAborted` events to automatically clear all timeouts
++
++### 4. Color Transition Issues
++
++**Problem**: Colors used percentage-based logic and inconsistent color names
++**Solution**: Changed to time-based color logic with consistent orange/red/blue scheme
++
++## File Changes Summary
++
++### Backend Files
++
++- `src/core/task/SubtaskTimeoutManager.ts`: Added `clearAll()` method
++- `src/core/task/Task.ts`: Added `clearAllSubtaskTimeouts()` method and completion event handlers
++- `src/core/webview/ClineProvider.ts`: Added `taskCompleted`/`taskAborted` event listeners
++- `src/core/webview/webviewMessageHandler.ts`: Added `findTimeoutManagingTask()` helper function
++- `src/shared/ExtensionMessage.ts`: Added timeout status interfaces and message types
++
++### Frontend Files
++
++- `webview-ui/src/context/ExtensionStateContext.tsx`: Added timeout status message handling
++- `webview-ui/src/components/chat/TaskHeader.tsx`: Integrated timeout progress component
++- `webview-ui/src/components/chat/SubtaskTimeoutProgress.tsx`: Implemented UI with all controls and color logic
++
++## Testing Guidelines
++
++### 1. Basic Functionality
++
++1. Create a subtask with `timeout_seconds` parameter
++2. Verify timeout counter appears with countdown timer
++3. Confirm +1m, +10m, X buttons are always visible
++4. Test timeout extension and manual cancellation
++
++### 2. Color Transitions
++
++1. Set short timeout (30 seconds)
++2. Verify blue color initially (>20s remaining)
++3. Confirm orange color at 20-5 seconds remaining
++4. Check red color at ≤5 seconds remaining
++
++### 3. Progress Bar Continuity
++
++1. Start timeout and let it progress
++2. Extend timeout with +1m or +10m
++3. Verify progress bar continues smoothly without reset
++
++### 4. Cleanup Testing
++
++1. Create subtask with timeout
++2. Complete task normally - verify timeout bar disappears
++3. Cancel task manually - verify timeout bar disappears
++4. Click "Close this task and start a new one" - verify timeout bar disappears
++
++## Future Considerations
++
++### Potential Enhancements
++
++- Configurable timeout extension amounts
++- Audio alerts for timeout warnings
++- Batch timeout management for multiple subtasks
++- Timeout history and statistics
++- Custom timeout warning thresholds
++
++### Performance Considerations
++
++- Timeout polling frequency (currently 1 second)
++- Memory cleanup for long-running tasks
++- Event listener management for large task hierarchies
++
++## Conclusion
++
++The subtask timeout feature provides a comprehensive solution for managing time-constrained subtasks with an intuitive UI, robust error handling, and clean lifecycle management. The implementation follows event-driven architecture principles and maintains clear separation between backend timeout logic and frontend presentation concerns.
+diff --git a/webview-ui/src/components/chat/SubtaskTimeoutProgress.tsx b/webview-ui/src/components/chat/SubtaskTimeoutProgress.tsx
+index cd03273e..be070a53 100644
+--- a/webview-ui/src/components/chat/SubtaskTimeoutProgress.tsx
++++ b/webview-ui/src/components/chat/SubtaskTimeoutProgress.tsx
+@@ -1,6 +1,6 @@
+-import { memo, useState, useEffect } from "react"
++import { memo, useState, useEffect, useRef, useCallback } from "react"
+ import { useTranslation } from "react-i18next"
+-import { Clock, Plus, X } from "lucide-react"
++import { Clock, Plus, Minus, X } from "lucide-react"
+ 
+ import { Button } from "@src/components/ui"
+ import { cn } from "@src/lib/utils"
+@@ -20,7 +20,6 @@ const SubtaskTimeoutProgress = ({
+ 	taskId,
+ 	timeoutMs,
+ 	startTime,
+-	warningPercent = 80,
+ 	onExtend,
+ 	onClear,
+ 	className,
+@@ -28,6 +27,11 @@ const SubtaskTimeoutProgress = ({
+ 	const { t } = useTranslation()
+ 	const [currentTime, setCurrentTime] = useState(Date.now())
+ 	const [isExpired, setIsExpired] = useState(false)
++	const expiredNotifiedRef = useRef(false)
++
++	// Track the previous taskId to detect new timeout sessions
++	const prevTaskIdRef = useRef<string>()
++	const prevStartTimeRef = useRef<number>()
+ 
+ 	useEffect(() => {
+ 		const interval = setInterval(() => {
+@@ -37,17 +41,44 @@ const SubtaskTimeoutProgress = ({
+ 		return () => clearInterval(interval)
+ 	}, [])
+ 
++	// Reset expired state when props change (new timeout or extension)
++	useEffect(() => {
++		setIsExpired(false)
++		expiredNotifiedRef.current = false
++
++		// Only reset current time for completely new timeout sessions
++		// (different taskId or different startTime)
++		const isNewTimeout = taskId !== prevTaskIdRef.current || startTime !== prevStartTimeRef.current
++
++		if (isNewTimeout) {
++			// For new timeouts, initialize currentTime to startTime to begin with 0 elapsed time
++			setCurrentTime(startTime)
++			prevTaskIdRef.current = taskId
++			prevStartTimeRef.current = startTime
++		}
++		// For timeout extensions (same taskId, same startTime, different timeoutMs),
++		// we don't reset currentTime - it continues to tick from the interval
++	}, [taskId, timeoutMs, startTime])
++
+ 	const elapsed = currentTime - startTime
+ 	const remaining = Math.max(0, timeoutMs - elapsed)
+ 	const progress = Math.min(100, (elapsed / timeoutMs) * 100)
+-	const isWarning = progress >= warningPercent
+-	const isUrgent = progress >= 95
++
++	// Color logic: red when 5 seconds or less, light yellow when 20 seconds or less, blue otherwise
++	const isUrgent = remaining <= 5000 // 5 seconds
++	const isWarning = remaining <= 20000 && remaining > 5000 // 20 seconds to 5 seconds
+ 
+ 	useEffect(() => {
+-		if (remaining <= 0 && !isExpired) {
++		if (remaining <= 0 && !isExpired && !expiredNotifiedRef.current) {
+ 			setIsExpired(true)
++			expiredNotifiedRef.current = true
++			// Notify backend that timeout has expired
++			vscode.postMessage({
++				type: "timeoutExpired",
++				taskId,
++			})
+ 		}
+-	}, [remaining, isExpired])
++	}, [remaining, isExpired, taskId])
+ 
+ 	const formatTime = (ms: number): string => {
+ 		const seconds = Math.ceil(ms / 1000)
+@@ -60,16 +91,102 @@ const SubtaskTimeoutProgress = ({
+ 		return `${seconds}s`
+ 	}
+ 
+-	const handleExtend = () => {
+-		const extensionMs = Math.max(60000, Math.floor(timeoutMs * 0.5)) // Extend by 50% or 1 minute, whichever is larger
+-		onExtend?.(taskId, extensionMs)
+-		vscode.postMessage({
+-			type: "extendSubtaskTimeout",
+-			taskId,
+-			extensionMs,
+-		})
++	const formatTimeWithSign = (ms: number, negative: boolean = false): string => {
++		const seconds = Math.floor(ms / 1000)
++		const minutes = Math.floor(seconds / 60)
++		const remainingSeconds = seconds % 60
++		const sign = negative ? "-" : ""
++
++		if (minutes > 0) {
++			return `${sign}${minutes}:${remainingSeconds.toString().padStart(2, "0")}`
++		}
++		return `${sign}${seconds}s`
+ 	}
+ 
++	// Hold-to-repeat functionality
++	const intervalRef = useRef<NodeJS.Timeout | null>(null)
++	const timeoutRef = useRef<NodeJS.Timeout | null>(null)
++
++	const handleExtend = useCallback(
++		(extensionMs: number) => {
++			onExtend?.(taskId, extensionMs)
++			vscode.postMessage({
++				type: "extendSubtaskTimeout",
++				taskId,
++				extensionMs,
++			})
++		},
++		[taskId, onExtend],
++	)
++
++	const handleReduce = useCallback(
++		(reductionMs: number) => {
++			// Reduce timeout by treating as negative extension
++			const extensionMs = -reductionMs
++			onExtend?.(taskId, extensionMs)
++			vscode.postMessage({
++				type: "extendSubtaskTimeout",
++				taskId,
++				extensionMs,
++			})
++		},
++		[taskId, onExtend],
++	)
++
++	const startRepeating = useCallback(
++		(isExtend: boolean) => {
++			let tickCount = 0
++
++			const performAction = () => {
++				tickCount++
++				// After 10 ticks (2 seconds), switch to 5-minute increments
++				const incrementMs = tickCount > 10 ? 300000 : 60000 // 5 minutes or 1 minute
++
++				if (isExtend) {
++					handleExtend(incrementMs)
++				} else {
++					// For reduce, check if we have enough time left and don't go below 1 minute
++					// Use a smaller increment if it would go below 1 minute
++					const minRemaining = 60000 // 1 minute minimum
++					if (remaining > minRemaining) {
++						const maxReduction = remaining - minRemaining
++						const actualReduction = Math.min(incrementMs, maxReduction)
++						if (actualReduction > 0) {
++							handleReduce(actualReduction)
++						}
++					}
++				}
++			}
++
++			// Initial action
++			performAction()
++
++			// Start repeating after a delay
++			timeoutRef.current = setTimeout(() => {
++				intervalRef.current = setInterval(performAction, 200) // Repeat every 200ms
++			}, 500) // Start repeating after 500ms hold
++		},
++		[handleExtend, handleReduce, remaining],
++	)
++
++	const stopRepeating = useCallback(() => {
++		if (timeoutRef.current) {
++			clearTimeout(timeoutRef.current)
++			timeoutRef.current = null
++		}
++		if (intervalRef.current) {
++			clearInterval(intervalRef.current)
++			intervalRef.current = null
++		}
++	}, [])
++
++	// Cleanup on unmount
++	useEffect(() => {
++		return () => {
++			stopRepeating()
++		}
++	}, [stopRepeating])
++
+ 	const handleClear = () => {
+ 		onClear?.(taskId)
+ 		vscode.postMessage({
+@@ -92,50 +209,59 @@ const SubtaskTimeoutProgress = ({
+ 	}
+ 
+ 	return (
+-		<div
+-			className={cn(
+-				"flex items-center gap-2 p-2 rounded-md border",
+-				isUrgent
+-					? "bg-red-500/10 border-red-500/20"
+-					: isWarning
+-						? "bg-yellow-500/10 border-yellow-500/20"
+-						: "bg-blue-500/10 border-blue-500/20",
+-				className,
+-			)}>
+-			<div className="flex items-center gap-2 flex-grow">
+-				<Clock
+-					size={16}
+-					className={cn(isUrgent ? "text-red-500" : isWarning ? "text-yellow-500" : "text-blue-500")}
+-				/>
+-				<div className="flex flex-col flex-grow min-w-0">
+-					<div className="flex items-center justify-between">
+-						<span className="text-sm font-medium">
+-							{t("chat:timeout.remaining")}: {formatTime(remaining)}
+-						</span>
+-						<span className="text-xs opacity-70">{progress.toFixed(0)}%</span>
+-					</div>
+-					<div className="w-full bg-vscode-panel-border rounded-full h-1.5 mt-1">
+-						<div
+-							className={cn(
+-								"h-1.5 rounded-full transition-all duration-1000",
+-								isUrgent ? "bg-red-500" : isWarning ? "bg-yellow-500" : "bg-blue-500",
+-							)}
+-							style={{ width: `${progress}%` }}
+-						/>
++		<>
++			<div
++				className={cn(
++					"flex items-center gap-2 p-2 rounded-md border",
++					isUrgent
++						? "bg-red-500/10 border-red-500/20"
++						: isWarning
++							? "bg-yellow-300/20 border-yellow-400/30"
++							: "bg-blue-500/10 border-blue-500/20",
++					className,
++				)}>
++				<div className="flex items-center gap-2 flex-grow">
++					<Clock
++						size={16}
++						className={cn(isUrgent ? "text-red-500" : isWarning ? "text-yellow-600" : "text-blue-500")}
++					/>
++					<div className="flex flex-col flex-grow min-w-0">
++						<div className="flex items-center justify-between">
++							<span className="text-sm text-vscode-foreground/70">{formatTime(elapsed)}</span>
++							<span className="text-sm font-medium">{formatTimeWithSign(remaining, true)}</span>
++						</div>
++						<div className="w-full bg-vscode-panel-border rounded-full h-1.5 mt-1">
++							<div
++								className={cn(
++									"h-1.5 rounded-full transition-all duration-1000",
++									isUrgent ? "bg-red-500" : isWarning ? "bg-yellow-500" : "bg-blue-500",
++								)}
++								style={{ width: `${progress}%` }}
++							/>
++						</div>
+ 					</div>
+ 				</div>
+-			</div>
+ 
+-			{isWarning && (
+ 				<div className="flex items-center gap-1 shrink-0">
+ 					<Button
+ 						variant="ghost"
+ 						size="sm"
+-						onClick={handleExtend}
++						onMouseDown={() => startRepeating(false)}
++						onMouseUp={stopRepeating}
++						onMouseLeave={stopRepeating}
++						title={t("chat:timeout.reduce")}
++						className="h-6 px-2 text-xs">
++						<Minus size={12} />
++					</Button>
++					<Button
++						variant="ghost"
++						size="sm"
++						onMouseDown={() => startRepeating(true)}
++						onMouseUp={stopRepeating}
++						onMouseLeave={stopRepeating}
+ 						title={t("chat:timeout.extend")}
+ 						className="h-6 px-2 text-xs">
+ 						<Plus size={12} />
+-						{t("chat:timeout.extend")}
+ 					</Button>
+ 					<Button
+ 						variant="ghost"
+@@ -144,11 +270,10 @@ const SubtaskTimeoutProgress = ({
+ 						title={t("chat:timeout.clear")}
+ 						className="h-6 px-2 text-xs">
+ 						<X size={12} />
+-						{t("chat:timeout.clear")}
+ 					</Button>
+ 				</div>
+-			)}
+-		</div>
++			</div>
++		</>
+ 	)
+ }
+ 
+diff --git a/webview-ui/src/components/chat/TaskHeader.tsx b/webview-ui/src/components/chat/TaskHeader.tsx
+index 71cbde10..f67bcf80 100644
+--- a/webview-ui/src/components/chat/TaskHeader.tsx
++++ b/webview-ui/src/components/chat/TaskHeader.tsx
+@@ -19,6 +19,7 @@ import Thumbnails from "../common/Thumbnails"
+ import { TaskActions } from "./TaskActions"
+ import { ContextWindowProgress } from "./ContextWindowProgress"
+ import { Mention } from "./Mention"
++import SubtaskTimeoutProgress from "./SubtaskTimeoutProgress"
+ 
+ export interface TaskHeaderProps {
+ 	task: ClineMessage
+@@ -48,7 +49,7 @@ const TaskHeader = ({
+ 	onClose,
+ }: TaskHeaderProps) => {
+ 	const { t } = useTranslation()
+-	const { apiConfiguration, currentTaskItem } = useExtensionState()
++	const { apiConfiguration, currentTaskItem, subtaskTimeoutStatus } = useExtensionState()
+ 	const { id: modelId, info: model } = useSelectedModel(apiConfiguration)
+ 	const [isTaskExpanded, setIsTaskExpanded] = useState(false)
+ 
+@@ -106,19 +107,30 @@ const TaskHeader = ({
+ 					</Button>
+ 				</div>
+ 				{/* Collapsed state: Track context and cost if we have any */}
+-				{!isTaskExpanded && contextWindow > 0 && (
+-					<div className={`w-full flex flex-row items-center gap-1 h-auto`}>
+-						<ContextWindowProgress
+-							contextWindow={contextWindow}
+-							contextTokens={contextTokens || 0}
+-							maxTokens={
+-								model
+-									? getModelMaxOutputTokens({ modelId, model, settings: apiConfiguration })
+-									: undefined
+-							}
+-						/>
+-						{condenseButton}
+-						{!!totalCost && <VSCodeBadge>${totalCost.toFixed(2)}</VSCodeBadge>}
++				{!isTaskExpanded && (
++					<div className="w-full flex flex-col gap-1">
++						{subtaskTimeoutStatus?.isActive && (
++							<SubtaskTimeoutProgress
++								taskId={subtaskTimeoutStatus.taskId}
++								timeoutMs={subtaskTimeoutStatus.timeoutMs}
++								startTime={subtaskTimeoutStatus.startTime}
++							/>
++						)}
++						{contextWindow > 0 && (
++							<div className={`w-full flex flex-row items-center gap-1 h-auto`}>
++								<ContextWindowProgress
++									contextWindow={contextWindow}
++									contextTokens={contextTokens || 0}
++									maxTokens={
++										model
++											? getModelMaxOutputTokens({ modelId, model, settings: apiConfiguration })
++											: undefined
++									}
++								/>
++								{condenseButton}
++								{!!totalCost && <VSCodeBadge>${totalCost.toFixed(2)}</VSCodeBadge>}
++							</div>
++						)}
+ 					</div>
+ 				)}
+ 				{/* Expanded state: Show task text and images */}
+@@ -141,6 +153,7 @@ const TaskHeader = ({
+ 						{task.images && task.images.length > 0 && <Thumbnails images={task.images} />}
+ 
+ 						<div className="flex flex-col gap-1">
++							{/* Timeout bar is only shown in collapsed state to avoid duplicates */}
+ 							{isTaskExpanded && contextWindow > 0 && (
+ 								<div
+ 									className={`w-full flex ${windowWidth < 400 ? "flex-col" : "flex-row"} gap-1 h-auto`}>
+diff --git a/webview-ui/src/context/ExtensionStateContext.tsx b/webview-ui/src/context/ExtensionStateContext.tsx
+index 456ae026..1e9c8406 100644
+--- a/webview-ui/src/context/ExtensionStateContext.tsx
++++ b/webview-ui/src/context/ExtensionStateContext.tsx
+@@ -288,6 +288,13 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
+ 					setExtensionRouterModels(message.routerModels)
+ 					break
+ 				}
++				case "subtaskTimeoutUpdate": {
++					setState((prevState) => ({
++						...prevState,
++						subtaskTimeoutStatus: message.timeoutStatus,
++					}))
++					break
++				}
+ 			}
+ 		},
+ 		[setListApiConfigMeta],
+diff --git a/webview-ui/src/i18n/locales/en/chat.json b/webview-ui/src/i18n/locales/en/chat.json
+index 6939bb2e..dfbd8385 100644
+--- a/webview-ui/src/i18n/locales/en/chat.json
++++ b/webview-ui/src/i18n/locales/en/chat.json
+@@ -295,5 +295,11 @@
+ 		"indexed": "Indexed",
+ 		"error": "Index error",
+ 		"status": "Index status"
++	},
++	"timeout": {
++		"expired": "Timeout Expired",
++		"extend": "Add time (hold to repeat)",
++		"reduce": "Reduce time (hold to repeat)",
++		"clear": "Cancel timeout"
+ 	}
+ }
