@@ -1,4 +1,7 @@
 export async function getGitHubStars() {
+	if (process.env.CI) {
+		return null
+	}
 	try {
 		const res = await fetch("https://api.github.com/repos/RooCodeInc/Roo-Code")
 		const data = await res.json()
@@ -16,6 +19,9 @@ export async function getGitHubStars() {
 }
 
 export async function getVSCodeReviews() {
+	if (process.env.CI) {
+		return []
+	}
 	const res = await fetch("https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery", {
 		method: "POST",
 		headers: {
@@ -60,6 +66,9 @@ export async function getVSCodeReviews() {
 }
 
 export async function getVSCodeDownloads() {
+	if (process.env.CI) {
+		return null
+	}
 	const res = await fetch("https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery", {
 		method: "POST",
 		headers: {

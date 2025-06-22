@@ -1,6 +1,6 @@
 import React from "react"
 import type { Metadata } from "next"
-import { Inter } from "next/font/google"
+// Use default system fonts to avoid downloading at build time
 
 import { Providers } from "@/components/providers"
 
@@ -8,7 +8,7 @@ import Shell from "./shell"
 
 import "./globals.css"
 
-const inter = Inter({ subsets: ["latin"] })
+const inter = { className: "" }
 
 export const metadata: Metadata = {
 	title: "Roo Code – Your AI-Powered Dev Team in VS Code",

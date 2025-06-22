@@ -1,5 +1,5 @@
 import type { Metadata } from "next"
-import { Geist, Geist_Mono } from "next/font/google"
+// Avoid downloading fonts in CI
 
 import { ThemeProvider, ReactQueryProvider } from "@/components/providers"
 import { Toaster } from "@/components/ui"
@@ -7,8 +7,8 @@ import { Header } from "@/components/layout/header"
 
 import "./globals.css"
 
-const fontSans = Geist({ variable: "--font-sans", subsets: ["latin"] })
-const fontMono = Geist_Mono({ variable: "--font-mono", subsets: ["latin"] })
+const fontSans = { variable: "" }
+const fontMono = { variable: "" }
 
 export const metadata: Metadata = {
 	title: "Roo Code Evals",
