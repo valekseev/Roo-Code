@@ -16,6 +16,7 @@ export async function newTaskTool(
 ) {
 	const mode: string | undefined = block.params.mode
 	const message: string | undefined = block.params.message
+	const timeoutSeconds: string | undefined = block.params.timeout_seconds
 
 	try {
 		if (block.partial) {
@@ -23,6 +24,7 @@ export async function newTaskTool(
 				tool: "newTask",
 				mode: removeClosingTag("mode", mode),
 				message: removeClosingTag("message", message),
+				timeout_seconds: removeClosingTag("timeout_seconds", timeoutSeconds),
 			})
 
 			await cline.ask("tool", partialMessage, block.partial).catch(() => {})
@@ -47,6 +49,17 @@ export async function newTaskTool(
 			// Un-escape one level: \\@ -> \@ (removes one backslash for hierarchical subtasks)
 			const unescapedMessage = message.replace(/\\\\@/g, "\\@")
 
+			// Parse timeout if provided
+			let timeoutMs: number | undefined
+			if (timeoutSeconds) {
+				const parsedTimeout = parseInt(timeoutSeconds, 10)
+				if (isNaN(parsedTimeout) || parsedTimeout <= 0) {
+					pushToolResult(formatResponse.toolError("Invalid timeout_seconds: must be a positive number"))
+					return
+				}
+				timeoutMs = parsedTimeout * 1000 // Convert to milliseconds
+			}
+
 			// Verify the mode exists
 			const targetMode = getModeBySlug(mode, (await cline.providerRef.deref()?.getState())?.customModes)
 
@@ -59,6 +72,7 @@ export async function newTaskTool(
 				tool: "newTask",
 				mode: targetMode.name,
 				content: message,
+				timeout_seconds: timeoutSeconds ? parseInt(timeoutSeconds, 10) : undefined,
 			})
 
 			const didApprove = await askApproval("tool", toolMessage)
@@ -86,12 +100,17 @@ export async function newTaskTool(
 			// Delay to allow mode change to take effect before next tool is executed.
 			await delay(500)
 
-			const newCline = await provider.initClineWithTask(unescapedMessage, undefined, cline)
+			const newCline = await provider.initClineWithTask(unescapedMessage, undefined, cline, timeoutMs)
 			if (!newCline) {
 				pushToolResult(t("tools:newTask.errors.policy_restriction"))
 				return
 			}
 			cline.emit("taskSpawned", newCline.taskId)
+
+			// Start timeout if specified
+			if (timeoutMs) {
+				cline.startSubtaskTimeout(newCline.taskId, timeoutMs)
+			}
 
 			pushToolResult(`Successfully created new task in ${targetMode.name} mode with message: ${unescapedMessage}`)
 

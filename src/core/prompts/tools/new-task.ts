@@ -7,17 +7,20 @@ Description: This will let you create a new task instance in the chosen mode usi
 Parameters:
 - mode: (required) The slug of the mode to start the new task in (e.g., "code", "debug", "architect").
 - message: (required) The initial user message or instructions for this new task.
+- timeout_seconds: (optional) Number of seconds after which the subtask will automatically timeout and be aborted. If not specified, uses default timeout setting.
 
 Usage:
 <new_task>
 <mode>your-mode-slug-here</mode>
 <message>Your initial instructions here</message>
+<timeout_seconds>300</timeout_seconds>
 </new_task>
 
 Example:
 <new_task>
 <mode>code</mode>
 <message>Implement a new feature for the application.</message>
+<timeout_seconds>600</timeout_seconds>
 </new_task>
 `
 }
